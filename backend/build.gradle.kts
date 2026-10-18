@@ -4,6 +4,10 @@ plugins {
     id("io.spring.dependency-management") version "1.1.6"
 }
 
+repositories {
+    mavenCentral()
+}
+
 group = "com.travelbuddy"
 version = "1.0.0"
 
