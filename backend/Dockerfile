@@ -3,7 +3,8 @@
 FROM gradle:8.10-jdk21-alpine AS builder
 WORKDIR /app
 COPY . .
-RUN gradle installDist --no-daemon
+RUN echo 'rootProject.name = "backend"' > settings.gradle.kts
+RUN gradle installDist -x test --no-daemon
 
 # Stage 2: Production JRE 21 Alpine image
 FROM eclipse-temurin:21-jre-alpine
