@@ -1,10 +1,9 @@
 # Multi-stage Docker build for Travel Buddy Spring Boot API
-# Stage 1: Build distribution using pre-installed Gradle & JDK 21
+# Stage 1: Build backend distribution using Gradle & JDK 21
 FROM gradle:8.10-jdk21-alpine AS builder
 WORKDIR /app
 COPY . .
-RUN echo 'rootProject.name = "backend"' > settings.gradle.kts
-RUN gradle installDist -x test --no-daemon
+RUN gradle :backend:installDist -x test --no-daemon
 
 # Stage 2: Production JRE 21 Alpine image
 FROM eclipse-temurin:21-jre-alpine
@@ -14,8 +13,8 @@ WORKDIR /app
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
 
-# Copy installed distribution
-COPY --from=builder /app/build/install/backend /app
+# Copy installed backend distribution
+COPY --from=builder /app/backend/build/install/backend /app
 
 # Render passes $PORT dynamically
 ENV PORT=8080
