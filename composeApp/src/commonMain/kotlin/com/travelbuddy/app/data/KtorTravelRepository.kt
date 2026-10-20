@@ -30,6 +30,18 @@ class KtorTravelRepository(
     private val config: TravelApiConfig,
     private val client: HttpClient = defaultHttpClient()
 ) : TravelRepository {
+    override suspend fun requestOtp(phone: String?, email: String?): Result<String?> = runCatching {
+        val type = if (email != null && email.isNotBlank()) "EMAIL" else "MOBILE"
+        val response = client.post(config.requestOtpEndpoint()) {
+            contentType(ContentType.Application.Json)
+            setBody(RequestOtpRequest(phone = phone, email = email, type = type))
+        }
+        response.requireSuccess()
+        val text = response.bodyAsText()
+        val json = runCatching { Json.parseToJsonElement(text).jsonObject }.getOrNull()
+        json?.get("otp")?.jsonPrimitive?.contentOrNull
+    }
+
     override suspend fun verifyOtp(request: OtpVerificationRequest): Result<Unit> = runCatching {
         client.post(config.verifyOtpEndpoint()) {
             contentType(ContentType.Application.Json)
@@ -92,13 +104,14 @@ class KtorTravelRepository(
             val src = obj["source"]?.jsonPrimitive?.contentOrNull ?: ""
             val dst = obj["destination"]?.jsonPrimitive?.contentOrNull ?: ""
             val dates = obj["dates"]?.jsonPrimitive?.contentOrNull ?: ""
+            val cover = obj["coverImage"]?.jsonPrimitive?.contentOrNull
             val members = obj["members"]?.jsonArray?.mapNotNull { m ->
                 val mObj = m.jsonObject
                 val mId = mObj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
                 val mName = mObj["name"]?.jsonPrimitive?.contentOrNull ?: mId
                 TripMember(mId, mName, 0xFF2F80ED, true)
             } ?: emptyList()
-            Trip(id, name, src, dst, dates, TripStatus.LIVE, members)
+            Trip(id, name, src, dst, dates, TripStatus.LIVE, members, coverImage = cover)
         }
     }
 
@@ -175,14 +188,16 @@ private fun String.toTripOrFallback(request: CreateTripRequest?, expectedId: Str
         val id = item["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
         TripMember(id, item["name"]?.jsonPrimitive?.contentOrNull ?: id, 0xFF2F80ED, true)
     } ?: request?.members?.map { TripMember(it, it, 0xFF2F80ED, true) } ?: emptyList()
+    val fallbackDynamicId = request?.id ?: "trip-${(100000..999999).random()}"
     return Trip(
-        id = json?.get("id")?.jsonPrimitive?.contentOrNull ?: expectedId.ifBlank { "pending" },
-        name = json?.get("tripName")?.jsonPrimitive?.contentOrNull ?: request?.tripName ?: "Live trip",
+        id = json?.get("id")?.jsonPrimitive?.contentOrNull ?: expectedId.ifBlank { fallbackDynamicId },
+        name = json?.get("name")?.jsonPrimitive?.contentOrNull ?: json?.get("tripName")?.jsonPrimitive?.contentOrNull ?: request?.tripName ?: "Live trip",
         source = json?.get("source")?.jsonPrimitive?.contentOrNull ?: request?.source ?: "",
         destination = json?.get("destination")?.jsonPrimitive?.contentOrNull ?: request?.destination ?: "",
-        dates = "",
+        dates = json?.get("dates")?.jsonPrimitive?.contentOrNull ?: request?.dates ?: "Planned",
         status = TripStatus.LIVE,
-        members = members
+        members = members,
+        coverImage = json?.get("coverImage")?.jsonPrimitive?.contentOrNull ?: request?.coverImage
     )
 }
 

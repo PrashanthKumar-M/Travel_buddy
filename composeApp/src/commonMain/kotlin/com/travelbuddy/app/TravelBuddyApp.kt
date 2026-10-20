@@ -198,6 +198,7 @@ internal fun TravelBuddyMain(
                 trips = fetchedTrips
                 activeTrip = fetchedTrips.first()
                 members = activeTrip.members
+                activeTripCover = activeTrip.coverImage
                 apiMessage = "Connected to backend • ${trips.size} trips synced"
             }
         }
@@ -374,7 +375,7 @@ internal fun TravelBuddyMain(
                             onPickTripCoverImage = onPickTripCoverImage,
                             onSelect = { trip ->
                                 activeTrip = trip
-                                activeTripCover = tripCovers[trip.id]
+                                activeTripCover = trip.coverImage ?: tripCovers[trip.id]
                                 members = trip.members
                                 apiMessage = "${trip.members.count { it.isSharingLocation }}/${trip.members.size} members online"
                             },
@@ -390,15 +391,17 @@ internal fun TravelBuddyMain(
                             },
                             onCreate = { draft ->
                                 val tripMembers = members.filter { it.id in draft.memberIds }.ifEmpty { members.take(1) }
+                                val dynamicId = draft.id.ifBlank { "trip-" + (100000..999999).random() }
                                 if (!config.useRemoteApi) {
                                     val localTrip = Trip(
-                                        id = "trip-${draft.title.hashCode()}",
+                                        id = dynamicId,
                                         name = draft.title,
                                         source = draft.source,
                                         destination = draft.destination,
                                         dates = draft.rideDate.ifBlank { "Planned" },
                                         status = TripStatus.PLANNING,
-                                        members = tripMembers
+                                        members = tripMembers,
+                                        coverImage = draft.coverImage
                                     )
                                     activeTrip = localTrip
                                     trips = trips + localTrip
@@ -416,14 +419,17 @@ internal fun TravelBuddyMain(
                                     draft.coverImage?.let { tripCovers = tripCovers + (localTrip.id to it) }
                                     selectedTab = AppTab.Home
                                     apiMessage = if (draft.reminderEnabled && draft.reportTime.isNotBlank()) {
-                                        "Trip created. Reminder set for ${draft.rideDate.substringBefore(" - ")} at ${draft.reportTime}."
-                                    } else "Trip created. Displayed on Home screen."
+                                        "Trip created (ID: $dynamicId). Reminder set for ${draft.rideDate.substringBefore(" - ")} at ${draft.reportTime}."
+                                    } else "Trip created with dynamic ID: $dynamicId"
                                 } else scope.launch {
                                     val request = CreateTripRequest(
+                                        id = dynamicId,
                                         tripName = draft.title,
                                         source = draft.source,
                                         destination = draft.destination,
-                                        createdBy = "local-user",
+                                        dates = draft.rideDate.ifBlank { "Planned" },
+                                        createdBy = "usr-1",
+                                        coverImage = draft.coverImage,
                                         members = draft.memberIds.toList()
                                     )
                                     repository.createTrip(request)
@@ -431,10 +437,10 @@ internal fun TravelBuddyMain(
                                             activeTrip = trip
                                             trips = trips + trip
                                             members = trip.members
-                                            activeTripCover = draft.coverImage
+                                            activeTripCover = draft.coverImage ?: trip.coverImage
                                             draft.coverImage?.let { tripCovers = tripCovers + (trip.id to it) }
                                             selectedTab = AppTab.Home
-                                            apiMessage = "Trip created and connected to live updates."
+                                            apiMessage = "Trip created live on Render server! (ID: ${trip.id})"
                                         }
                                         .onFailure { apiMessage = "Could not create trip: ${it.message ?: "unknown error"}" }
                                 }
@@ -1358,6 +1364,7 @@ private fun CreateTripDialog(
     var coverImage by remember { mutableStateOf(pendingCoverImageUri.orEmpty()) }
     var picker by remember { mutableStateOf<String?>(null) }
     var reminderEnabled by remember { mutableStateOf(true) }
+    val generatedTripId = remember { "trip-" + (100000..999999).random() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1367,6 +1374,36 @@ private fun CreateTripDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.height(460.dp)
             ) {
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFFF1F5F9),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("Dynamic Trip ID", fontSize = 11.sp, color = Color(0xFF64748B))
+                                Text(generatedTripId, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                            }
+                            Surface(
+                                color = Color(0xFFDCFCE7),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = "AUTO-GENERATED",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF166534),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
                 item {
                     OutlinedTextField(
                         value = destination,
@@ -1528,6 +1565,7 @@ private fun CreateTripDialog(
                     if (destination.isBlank() || title.isBlank()) return@Button
                     onCreated(
                         CreateTripData(
+                            id = generatedTripId,
                             source = source,
                             destination = destination,
                             title = title,
@@ -3598,6 +3636,7 @@ private enum class RideType {
 }
 
 private data class CreateTripData(
+    val id: String = "",
     val source: String,
     val destination: String,
     val title: String,

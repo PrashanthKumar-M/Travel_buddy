@@ -28,8 +28,16 @@ public class TravelBuddyStateService {
 
     private final AtomicInteger codeGenerator = new AtomicInteger(1000);
     private Consumer<String> webSocketBroadcastListener = null;
+    private final SmsGatewayService smsGatewayService;
+    private final EmailService emailService;
 
     public TravelBuddyStateService() {
+        this(new SmsGatewayService(), new EmailService());
+    }
+
+    public TravelBuddyStateService(SmsGatewayService smsGatewayService, EmailService emailService) {
+        this.smsGatewayService = smsGatewayService;
+        this.emailService = emailService;
         seedInitialData();
     }
 
@@ -254,20 +262,71 @@ public class TravelBuddyStateService {
         }
     }
 
+    private final Map<String, String> activeOtps = new ConcurrentHashMap<>();
+
     // --- AUTHENTICATION & PROFILE ---
-    public boolean requestOtp(String phone) {
-        return phone != null && !phone.isBlank();
+    public String requestOtp(String phone) {
+        return requestOtp(phone, null);
+    }
+
+    public String requestOtp(String phone, String email) {
+        String identifier = null;
+        boolean isEmail = false;
+        if (email != null && !email.isBlank()) {
+            identifier = email.trim().toLowerCase();
+            isEmail = true;
+        } else if (phone != null && !phone.isBlank()) {
+            identifier = phone.replaceAll("[^0-9]", "");
+        }
+        if (identifier == null || identifier.isBlank()) return null;
+
+        int code = 100000 + (int)(Math.random() * 900000);
+        String otp = String.valueOf(code);
+        activeOtps.put(identifier, otp);
+
+        if (isEmail) {
+            emailService.sendEmailOtp(identifier, otp);
+        } else {
+            smsGatewayService.sendSmsOtp(identifier, otp);
+        }
+        return otp;
     }
 
     public AuthResponse verifyOtp(String phone, String otp) {
-        String uid = "usr-" + Math.abs(phone.hashCode() % 10000);
-        User user = users.computeIfAbsent(uid, id -> new User(id, phone, "User " + phone.substring(Math.max(0, phone.length() - 4)), null, System.currentTimeMillis()));
+        return verifyOtp(phone, null, otp);
+    }
+
+    public AuthResponse verifyOtp(String phone, String email, String otp) {
+        String identifier = null;
+        boolean isEmail = false;
+        if (email != null && !email.isBlank()) {
+            identifier = email.trim().toLowerCase();
+            isEmail = true;
+        } else if (phone != null && !phone.isBlank()) {
+            identifier = phone.replaceAll("[^0-9]", "");
+        }
+        if (identifier == null || identifier.isBlank()) {
+            return new AuthResponse(false, null, null, null, null, "Phone or Email required");
+        }
+
+        String expectedOtp = activeOtps.get(identifier);
+        if (expectedOtp == null || !expectedOtp.equals(otp != null ? otp.trim() : "")) {
+            return new AuthResponse(false, null, null, null, null, "Invalid OTP for " + identifier);
+        }
+        activeOtps.remove(identifier);
+
+        String uid = "usr-" + Math.abs(identifier.hashCode() % 10000);
+        String displayName = isEmail ? identifier.split("@")[0] : ("User " + identifier.substring(Math.max(0, identifier.length() - 4)));
+        String contactPhone = isEmail ? "+91 98765 43210" : ("+91 " + identifier);
+        String userEmail = isEmail ? identifier : (identifier + "@travelbuddy.app");
+
+        User user = users.computeIfAbsent(uid, id -> new User(id, contactPhone, displayName, null, System.currentTimeMillis()));
         userProfiles.putIfAbsent(uid, new UserProfile(
-                uid, phone, user.name(), phone.replaceAll("[^0-9]", "") + "@travelbuddy.app", user.avatar(),
+                uid, contactPhone, user.name(), userEmail, user.avatar(),
                 "Emergency Contact", "+91 98765 43210", 1, 150.0, 500.0, System.currentTimeMillis()
         ));
         String token = "tb_jwt_" + UUID.randomUUID();
-        return new AuthResponse(true, token, user.id(), user.name(), user.phone(), "Authenticated successfully");
+        return new AuthResponse(true, token, user.id(), user.name(), contactPhone, "Authenticated successfully");
     }
 
     public UserProfile getUserProfile(String userId) {
@@ -332,7 +391,9 @@ public class TravelBuddyStateService {
 
     // --- TRIPS ---
     public Trip createTrip(CreateTripRequest req) {
-        String id = "trip-" + UUID.randomUUID().toString().substring(0, 8);
+        String id = (req.id() != null && !req.id().isBlank())
+                ? req.id()
+                : "trip-" + UUID.randomUUID().toString().substring(0, 8);
         String code = "TRIP-" + (1000 + codeGenerator.incrementAndGet() % 9000);
 
         List<TripMember> members = new ArrayList<>();

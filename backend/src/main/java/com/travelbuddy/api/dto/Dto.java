@@ -6,9 +6,9 @@ import java.util.Set;
 
 public class Dto {
 
-    public record RequestOtpRequest(String phone) {}
+    public record RequestOtpRequest(String phone, String email, String type) {}
 
-    public record VerifyOtpRequest(String phone, String otp) {}
+    public record VerifyOtpRequest(String phone, String email, String otp) {}
 
     public record AuthResponse(
             boolean success,
@@ -20,6 +20,7 @@ public class Dto {
     ) {}
 
     public record CreateTripRequest(
+            String id,
             String tripName,
             String source,
             String destination,

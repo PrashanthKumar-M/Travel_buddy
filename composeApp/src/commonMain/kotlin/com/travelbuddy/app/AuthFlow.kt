@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,7 +66,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.travelbuddy.app.data.KtorTravelRepository
+import com.travelbuddy.app.data.OtpVerificationRequest
+import com.travelbuddy.app.data.TravelApiConfig
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Design Tokens matching the authentic screens:
@@ -98,11 +104,8 @@ private enum class AuthStage {
     Main
 }
 
-/** Demo credentials */
+/** Login flow setting */
 private const val REQUIRE_LOGIN = true
-private const val DEMO_PHONE = "9876543210"
-private const val DEMO_OTP_6 = "123456"
-private const val DEMO_OTP_4 = "1234"
 
 /**
  * Public entry point for Android, iOS, and Web.
@@ -115,9 +118,15 @@ fun TravelBuddyApp(
     pendingCoverImageUri: String? = null,
     onPickTripCoverImage: (() -> Unit)? = null
 ) {
+    val coroutineScope = rememberCoroutineScope()
+    val repository = remember(config.apiBaseUrl, config.webSocketUrl) {
+        KtorTravelRepository(TravelApiConfig(config.apiBaseUrl, config.webSocketUrl))
+    }
     var stage by remember { mutableStateOf(if (REQUIRE_LOGIN) AuthStage.Welcome else AuthStage.Main) }
-    var phoneDigits by remember { mutableStateOf(DEMO_PHONE) }
+    var loginIdentifier by remember { mutableStateOf("") }
+    var isEmailAuth by remember { mutableStateOf(false) }
     var userPassword by remember { mutableStateOf("") }
+    var dynamicOtp by remember { mutableStateOf("") }
 
     when (stage) {
         AuthStage.Welcome -> {
@@ -127,15 +136,33 @@ fun TravelBuddyApp(
         }
 
         AuthStage.LoginWithMobile -> {
-            LoginWithMobileScreen(
-                initialPhone = phoneDigits,
+            LoginScreen(
+                initialIdentifier = loginIdentifier,
+                initialIsEmail = isEmailAuth,
                 onBack = { stage = AuthStage.Welcome },
-                onSendOtp = { phone ->
-                    phoneDigits = phone
+                onSendOtp = { identifier, isEmail ->
+                    loginIdentifier = identifier
+                    isEmailAuth = isEmail
+                    val generated = (100000..999999).random().toString()
+                    dynamicOtp = generated
+                    // 1. Send real cellular SMS from device SIM to the entered number if mobile
+                    if (!isEmail) {
+                        dispatchDeviceOtpNotification(identifier, generated)
+                    }
+                    // 2. Request OTP from live backend API (dispatches real Email if email, or SMS if mobile)
+                    coroutineScope.launch {
+                        val phoneArg = if (!isEmail) identifier else null
+                        val emailArg = if (isEmail) identifier else null
+                        repository.requestOtp(phone = phoneArg, email = emailArg).onSuccess { remoteOtp ->
+                            if (!remoteOtp.isNullOrBlank()) {
+                                dynamicOtp = remoteOtp
+                            }
+                        }
+                    }
                     stage = AuthStage.OtpVerification
                 },
-                onPasswordLoginSuccess = { phone, password ->
-                    phoneDigits = phone
+                onPasswordLoginSuccess = { identifier, password ->
+                    loginIdentifier = identifier
                     userPassword = password
                     stage = AuthStage.Main
                 }
@@ -144,9 +171,33 @@ fun TravelBuddyApp(
 
         AuthStage.OtpVerification -> {
             OtpVerificationScreen(
-                phone = phoneDigits,
+                identifier = loginIdentifier,
+                isEmail = isEmailAuth,
+                expectedOtp = dynamicOtp,
+                onResendOtp = {
+                    val fresh = (100000..999999).random().toString()
+                    dynamicOtp = fresh
+                    if (!isEmailAuth) {
+                        dispatchDeviceOtpNotification(loginIdentifier, fresh)
+                    }
+                    coroutineScope.launch {
+                        val phoneArg = if (!isEmailAuth) loginIdentifier else null
+                        val emailArg = if (isEmailAuth) loginIdentifier else null
+                        repository.requestOtp(phone = phoneArg, email = emailArg).onSuccess { remoteOtp ->
+                            if (!remoteOtp.isNullOrBlank()) {
+                                dynamicOtp = remoteOtp
+                            }
+                        }
+                    }
+                    fresh
+                },
                 onBack = { stage = AuthStage.LoginWithMobile },
                 onVerified = {
+                    coroutineScope.launch {
+                        val phoneArg = if (!isEmailAuth) loginIdentifier else null
+                        val emailArg = if (isEmailAuth) loginIdentifier else null
+                        repository.verifyOtp(OtpVerificationRequest(phone = phoneArg, email = emailArg, otp = dynamicOtp))
+                    }
                     stage = AuthStage.SetPassword
                 }
             )
@@ -163,9 +214,10 @@ fun TravelBuddyApp(
         }
 
         AuthStage.Main -> {
+            val userDisplay = if (isEmailAuth) loginIdentifier else "+91 $loginIdentifier"
             TravelBuddyMain(
                 config = config,
-                userPhone = "+91 $phoneDigits",
+                userPhone = userDisplay,
                 pendingCoverImageUri = pendingCoverImageUri,
                 onPickTripCoverImage = onPickTripCoverImage,
                 onLogout = { stage = AuthStage.Welcome }
@@ -185,10 +237,20 @@ private fun WelcomeScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0A192F),
+                        Color(0xFF0F2B48),
+                        Color(0xFF0A3A40),
+                        Color(0xFF0B2436),
+                        Color(0xFF061524)
+                    )
+                )
+            )
     ) {
-        // Scenic winding road with mist and mountain hills
-        ScenicMountainRoadBackdrop(
+        // Modern Atmospheric Highway & Ambient Glow Backdrop
+        AtmosphericRoadBackdrop(
             modifier = Modifier.fillMaxSize()
         )
 
@@ -198,315 +260,332 @@ private fun WelcomeScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(horizontal = 24.dp, vertical = 20.dp),
+                .padding(horizontal = 24.dp, vertical = 18.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Real Brand Logo
-            TravelBuddyLogo(size = 76.dp)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Spacer(Modifier.height(8.dp))
 
-            Spacer(Modifier.height(14.dp))
+                // Glowing Brand Emblem
+                Box(
+                    modifier = Modifier
+                        .size(92.dp)
+                        .background(
+                            Brush.radialGradient(
+                                listOf(Color(0x5038BDF8), Color(0x1538BDF8), Color.Transparent)
+                            ),
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF1E293B).copy(alpha = 0.85f),
+                        border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF38BDF8).copy(alpha = 0.5f)),
+                        modifier = Modifier.size(76.dp),
+                        shadowElevation = 8.dp
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            TravelBuddyLogo(size = 56.dp)
+                        }
+                    }
+                }
 
-            // App Name
-            Text(
-                text = "Travel Buddy",
-                fontSize = 34.sp,
-                fontWeight = FontWeight.Bold,
-                color = BrandDeepTeal
-            )
+                Spacer(Modifier.height(14.dp))
 
-            Spacer(Modifier.height(4.dp))
+                // App Title
+                Text(
+                    text = "Travel Buddy",
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White
+                )
 
-            // Slogan 1
-            Text(
-                text = "Track • Split • Travel • Connect",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = BrandMutedSlogan
-            )
+                Spacer(Modifier.height(6.dp))
 
-            Spacer(Modifier.height(4.dp))
+                // Premium Category Tag
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF0284C7).copy(alpha = 0.20f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.45f))
+                ) {
+                    Text(
+                        text = "LIVE GROUP NAVIGATION & EXPENSE SPLIT",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF7DD3FC),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        letterSpacing = 0.8.sp
+                    )
+                }
 
-            // Family & Friends tracking + Split slogan
-            Text(
-                text = "Family & Friends Live Tracking • Smart Expense Splitting",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF0369A1)
-            )
+                Spacer(Modifier.height(16.dp))
 
-            Spacer(Modifier.height(24.dp))
+                // Hero Catchphrase
+                Text(
+                    text = "New Roads, Better Friends.\nTravel Together In-Sync.",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF1F5F9),
+                    textAlign = TextAlign.Center,
+                    lineHeight = 32.sp
+                )
 
-            // Main Headline
-            Text(
-                text = "New Roads, Better Friends\nTrack Live & Split Fairly",
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                fontStyle = FontStyle.Italic,
-                color = Color(0xFF1E293B),
-                textAlign = TextAlign.Center,
-                lineHeight = 36.sp
-            )
+                Spacer(Modifier.height(18.dp))
 
-            Spacer(modifier = Modifier.weight(1f))
+                // 3 Modern Glass Feature Highlights
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    WelcomeFeatureCard(
+                        icon = "📍",
+                        title = "Live Group Radar",
+                        description = "Track all riders live on 3D map with speed & battery telemetry"
+                    )
+                    WelcomeFeatureCard(
+                        icon = "⚡",
+                        title = "Zero-Math Split",
+                        description = "Equal & custom splits with instant net settlement calculations"
+                    )
+                    WelcomeFeatureCard(
+                        icon = "🛡️",
+                        title = "Route Geofence & SOS",
+                        description = "Instant emergency broadcast with breadcrumb trail coordinates"
+                    )
+                }
 
-            // "Get Started ->" Royal Blue Pill Button
+                Spacer(Modifier.height(16.dp))
+            }
+
+            // Primary "Get Started" Pill Button
             Button(
                 onClick = onGetStarted,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
                 shape = RoundedCornerShape(28.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = BrandBlue)
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues()
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(
+                                    Color(0xFF2563EB),
+                                    Color(0xFF1D4ED8),
+                                    Color(0xFF0284C7)
+                                )
+                            ),
+                            shape = RoundedCornerShape(28.dp)
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "Get Started",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Get Started",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "Get Started",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Get Started",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+                text = "Free for all travel groups • Real-time Sync & Live Map",
+                fontSize = 11.sp,
+                color = Color(0xFF94A3B8),
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(Modifier.height(4.dp))
+        }
+    }
+}
+
+@Composable
+private fun WelcomeFeatureCard(
+    icon: String,
+    title: String,
+    description: String
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF1E293B).copy(alpha = 0.75f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155).copy(alpha = 0.8f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF0F172A).copy(alpha = 0.85f),
+                modifier = Modifier.size(42.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(text = icon, fontSize = 20.sp)
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = title,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = description,
+                    fontSize = 11.sp,
+                    color = Color(0xFFCBD5E1),
+                    lineHeight = 15.sp
+                )
+            }
         }
     }
 }
 
 // ============================================================
-// SCENIC MOUNTAIN ROAD CANVAS (Custom vector background)
+// ATMOSPHERIC HIGHWAY BACKDROP (Modern Cinematic Canvas)
 // ============================================================
 
 @Composable
-private fun ScenicMountainRoadBackdrop(
+private fun AtmosphericRoadBackdrop(
     modifier: Modifier = Modifier
 ) {
     Canvas(modifier = modifier) {
         val w = size.width
         val h = size.height
 
-        // 1. Sky Gradient: Soft morning mist to sunrise glow
-        val skyBrush = Brush.verticalGradient(
-            colors = listOf(
-                Color(0xFFFFFFFF),
-                Color(0xFFF7F8F9),
-                Color(0xFFEDF3F1),
-                Color(0xFFDFEAE6),
-                Color(0xFFD3E1DD)
+        // 1. Ambient Glow Orbs
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(Color(0x3538BDF8), Color(0x1038BDF8), Color.Transparent),
+                center = Offset(w * 0.2f, h * 0.25f),
+                radius = w * 0.5f
             ),
-            startY = 0f,
-            endY = h * 0.45f
+            center = Offset(w * 0.2f, h * 0.25f),
+            radius = w * 0.5f
         )
-        drawRect(brush = skyBrush, size = Size(w, h))
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(Color(0x2506B6D4), Color.Transparent),
+                center = Offset(w * 0.85f, h * 0.65f),
+                radius = w * 0.55f
+            ),
+            center = Offset(w * 0.85f, h * 0.65f),
+            radius = w * 0.55f
+        )
 
-        // 2. Distant mountain peaks (misty grey-green)
-        val mtnFar = Path().apply {
-            moveTo(0f, h * 0.32f)
-            cubicTo(w * 0.25f, h * 0.26f, w * 0.5f, h * 0.30f, w * 0.75f, h * 0.24f)
-            lineTo(w, h * 0.27f)
+        // 2. Smooth Scenic Horizon Hills (soft silhouettes with mist)
+        val hill1 = Path().apply {
+            moveTo(0f, h * 0.72f)
+            cubicTo(w * 0.25f, h * 0.68f, w * 0.45f, h * 0.74f, w * 0.7f, h * 0.70f)
+            cubicTo(w * 0.85f, h * 0.67f, w * 0.95f, h * 0.72f, w, h * 0.71f)
             lineTo(w, h)
             lineTo(0f, h)
             close()
         }
         drawPath(
-            path = mtnFar,
-            brush = Brush.verticalGradient(
-                colors = listOf(Color(0xFFBFD4CC), Color(0xFF8AA69A)),
-                startY = h * 0.24f,
-                endY = h * 0.50f
-            )
+            path = hill1,
+            color = Color(0xFF0F2A38).copy(alpha = 0.5f)
         )
 
-        // 3. Middle mountain slope covered in trees
-        val mtnMid = Path().apply {
-            moveTo(0f, h * 0.22f)
-            cubicTo(w * 0.2f, h * 0.32f, w * 0.35f, h * 0.48f, w * 0.55f, h * 0.65f)
-            lineTo(0f, h * 0.75f)
-            close()
-        }
-        drawPath(
-            path = mtnMid,
-            brush = Brush.linearGradient(
-                colors = listOf(Color(0xFF4C7362), Color(0xFF2E4E41)),
-                start = Offset(0f, h * 0.25f),
-                end = Offset(w * 0.6f, h * 0.7f)
-            )
-        )
-
-        // Right hill with forest
-        val mtnRight = Path().apply {
-            moveTo(w * 0.65f, h * 0.35f)
-            cubicTo(w * 0.8f, h * 0.45f, w * 0.9f, h * 0.55f, w, h * 0.6f)
+        val hill2 = Path().apply {
+            moveTo(0f, h * 0.78f)
+            cubicTo(w * 0.3f, h * 0.74f, w * 0.6f, h * 0.82f, w, h * 0.76f)
             lineTo(w, h)
-            lineTo(w * 0.6f, h)
+            lineTo(0f, h)
             close()
         }
         drawPath(
-            path = mtnRight,
-            color = Color(0xFF6B8A7A)
+            path = hill2,
+            color = Color(0xFF071E28).copy(alpha = 0.7f)
         )
 
-        // 4. Winding Mountain Asphalt Road
-        // Curves from lower left/center sweeping toward the right and curving into the mountain
-        val roadPath = Path().apply {
-            moveTo(-w * 0.1f, h)
-            cubicTo(
-                w * 0.25f, h * 0.82f,
-                w * 0.55f, h * 0.74f,
-                w * 0.42f, h * 0.58f
-            )
-            lineTo(w * 0.52f, h * 0.56f)
-            cubicTo(
-                w * 0.72f, h * 0.74f,
-                w * 0.65f, h * 0.85f,
-                w * 0.95f, h
-            )
+        // 3. Smooth curving Highway receding into the horizon
+        val road = Path().apply {
+            moveTo(w * 0.48f, h * 0.75f)
+            lineTo(w * 0.52f, h * 0.75f)
+            cubicTo(w * 0.54f, h * 0.84f, w * 0.65f, h * 0.92f, w * 0.85f, h)
+            lineTo(w * 0.15f, h)
+            cubicTo(w * 0.38f, h * 0.92f, w * 0.46f, h * 0.84f, w * 0.48f, h * 0.75f)
             close()
         }
         drawPath(
-            path = roadPath,
+            path = road,
             brush = Brush.verticalGradient(
-                colors = listOf(Color(0xFF4A5568), Color(0xFF2D3748), Color(0xFF1A202C)),
-                startY = h * 0.56f,
+                colors = listOf(
+                    Color(0xFF1E293B).copy(alpha = 0.3f),
+                    Color(0xFF1E293B).copy(alpha = 0.85f),
+                    Color(0xFF0F172A)
+                ),
+                startY = h * 0.75f,
                 endY = h
             )
         )
 
-        // Road Outer Stone Barrier / Guard Wall
-        val wallPath = Path().apply {
-            moveTo(w * 0.52f, h * 0.56f)
-            cubicTo(
-                w * 0.73f, h * 0.74f,
-                w * 0.66f, h * 0.85f,
-                w * 0.97f, h
-            )
-        }
-        drawPath(
-            path = wallPath,
-            color = Color(0xFF718096),
-            style = Stroke(width = 8f, cap = StrokeCap.Round)
-        )
-
-        // Road Center Broken Lane Lines (Yellow/White)
+        // 4. Glowing Neon Amber Center Line
         val centerLine = Path().apply {
-            moveTo(w * 0.47f, h * 0.57f)
-            cubicTo(
-                w * 0.48f, h * 0.68f,
-                w * 0.45f, h * 0.80f,
-                w * 0.42f, h
-            )
+            moveTo(w * 0.50f, h * 0.75f)
+            cubicTo(w * 0.51f, h * 0.84f, w * 0.53f, h * 0.93f, w * 0.50f, h)
         }
         drawPath(
             path = centerLine,
-            color = Color(0xFFFBBF24),
-            style = Stroke(width = 3f, cap = StrokeCap.Round)
-        )
-
-        // 5. Motorcyclist / Rider silhouette leaning into the turn
-        val riderX = w * 0.38f
-        val riderY = h * 0.72f
-        val riderScale = w * 0.0016f
-
-        // Motorbike body
-        val bikePath = Path().apply {
-            moveTo(riderX - 25f * riderScale, riderY + 30f * riderScale)
-            lineTo(riderX + 25f * riderScale, riderY + 28f * riderScale)
-            lineTo(riderX + 35f * riderScale, riderY + 15f * riderScale)
-            lineTo(riderX - 10f * riderScale, riderY + 10f * riderScale)
-            close()
-        }
-        drawPath(path = bikePath, color = Color(0xFF1E293B))
-
-        // Rear Wheel
-        drawCircle(
-            color = Color(0xFF0F172A),
-            radius = 16f * riderScale,
-            center = Offset(riderX - 22f * riderScale, riderY + 32f * riderScale)
-        )
-        // Front Wheel
-        drawCircle(
-            color = Color(0xFF0F172A),
-            radius = 16f * riderScale,
-            center = Offset(riderX + 28f * riderScale, riderY + 30f * riderScale)
-        )
-        // Red Taillight
-        drawCircle(
-            color = Color(0xFFEF4444),
-            radius = 4f * riderScale,
-            center = Offset(riderX - 26f * riderScale, riderY + 18f * riderScale)
-        )
-
-        // Rider Torso and Helmet
-        val torsoPath = Path().apply {
-            moveTo(riderX - 12f * riderScale, riderY + 14f * riderScale)
-            lineTo(riderX + 8f * riderScale, riderY + 8f * riderScale)
-            lineTo(riderX + 16f * riderScale, riderY - 14f * riderScale)
-            lineTo(riderX - 4f * riderScale, riderY - 10f * riderScale)
-            close()
-        }
-        drawPath(path = torsoPath, color = Color(0xFF334155))
-
-        // Rider Helmet
-        drawCircle(
-            color = Color(0xFF0F172A),
-            radius = 10f * riderScale,
-            center = Offset(riderX + 6f * riderScale, riderY - 24f * riderScale)
-        )
-
-        // 6. Top soft mist overlay for crisp text readability
-        drawRect(
             brush = Brush.verticalGradient(
-                colors = listOf(
-                    Color(0xF0FFFFFF),
-                    Color(0xD9FFFFFF),
-                    Color(0x66FFFFFF),
-                    Color(0x00FFFFFF)
-                ),
-                startY = 0f,
-                endY = h * 0.42f
-            ),
-            size = Size(w, h * 0.42f)
-        )
-
-        // Bottom gradient overlay for button contrast
-        drawRect(
-            brush = Brush.verticalGradient(
-                colors = listOf(
-                    Color(0x00FFFFFF),
-                    Color(0xCCFFFFFF),
-                    Color(0xF2FFFFFF)
-                ),
-                startY = h * 0.78f,
+                colors = listOf(Color(0x00F59E0B), Color(0xAAF59E0B), Color(0xFFFBBF24)),
+                startY = h * 0.75f,
                 endY = h
             ),
-            topLeft = Offset(0f, h * 0.78f),
-            size = Size(w, h * 0.22f)
+            style = Stroke(width = 4f, cap = StrokeCap.Round)
         )
     }
 }
 
 // ============================================================
-// 2. LOGIN WITH MOBILE NUMBER SCREEN (Image 1)
+// 2. LOGIN SCREEN (Mobile Number or Email Address)
 // ============================================================
 
+private enum class LoginMethod {
+    Mobile,
+    Email
+}
+
 @Composable
-private fun LoginWithMobileScreen(
-    initialPhone: String,
+private fun LoginScreen(
+    initialIdentifier: String,
+    initialIsEmail: Boolean,
     onBack: () -> Unit,
-    onSendOtp: (String) -> Unit,
+    onSendOtp: (String, Boolean) -> Unit,
     onPasswordLoginSuccess: (String, String) -> Unit
 ) {
-    var mobileNumber by remember { mutableStateOf(initialPhone) }
+    var loginMethod by remember { mutableStateOf(if (initialIsEmail) LoginMethod.Email else LoginMethod.Mobile) }
+    var mobileNumber by remember { mutableStateOf(if (!initialIsEmail) initialIdentifier else "") }
+    var emailAddress by remember { mutableStateOf(if (initialIsEmail) initialIdentifier else "") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var isPasswordMode by remember { mutableStateOf(false) }
@@ -541,17 +620,17 @@ private fun LoginWithMobileScreen(
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
 
         // Real Brand Logo
-        TravelBuddyLogo(size = 68.dp)
+        TravelBuddyLogo(size = 64.dp)
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
 
         // App Title
         Text(
             text = "Travel Buddy",
-            fontSize = 30.sp,
+            fontSize = 28.sp,
             fontWeight = FontWeight.Bold,
             color = BrandDeepTeal
         )
@@ -565,7 +644,7 @@ private fun LoginWithMobileScreen(
             fontWeight = FontWeight.Medium,
             color = BrandMutedSlogan
         )
-        Spacer(Modifier.height(3.dp))
+        Spacer(Modifier.height(2.dp))
         Text(
             text = "Family & Friends Live Tracking • Smart Expense Splitting",
             fontSize = 12.sp,
@@ -573,81 +652,179 @@ private fun LoginWithMobileScreen(
             color = Color(0xFF0369A1)
         )
 
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(22.dp))
 
-        // Headline (Left-aligned as in screenshot)
+        // Login Method Selector Tab (Mobile vs Email)
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFFF1F5F9),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            modifier = Modifier.fillMaxWidth().height(48.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // Mobile Tab
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (loginMethod == LoginMethod.Mobile) Color.White else Color.Transparent,
+                    shadowElevation = if (loginMethod == LoginMethod.Mobile) 2.dp else 0.dp,
+                    modifier = Modifier.weight(1f).fillMaxHeight().clickable {
+                        loginMethod = LoginMethod.Mobile
+                        errorMessage = null
+                    }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "📱 Mobile Number",
+                            fontSize = 13.sp,
+                            fontWeight = if (loginMethod == LoginMethod.Mobile) FontWeight.Bold else FontWeight.Medium,
+                            color = if (loginMethod == LoginMethod.Mobile) BrandBlue else TextMuted
+                        )
+                    }
+                }
+
+                // Email Tab
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (loginMethod == LoginMethod.Email) Color.White else Color.Transparent,
+                    shadowElevation = if (loginMethod == LoginMethod.Email) 2.dp else 0.dp,
+                    modifier = Modifier.weight(1f).fillMaxHeight().clickable {
+                        loginMethod = LoginMethod.Email
+                        errorMessage = null
+                    }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "✉️ Email Address",
+                            fontSize = 13.sp,
+                            fontWeight = if (loginMethod == LoginMethod.Email) FontWeight.Bold else FontWeight.Medium,
+                            color = if (loginMethod == LoginMethod.Email) BrandBlue else TextMuted
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // Headline
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = if (isPasswordMode) "Login with Password" else "Login with Mobile Number",
-                fontSize = 24.sp,
+                text = if (isPasswordMode) "Login with Password"
+                       else if (loginMethod == LoginMethod.Mobile) "Login with Mobile Number"
+                       else "Login with Email Address",
+                fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextDark
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
             Text(
-                text = if (isPasswordMode) "Enter your registered password" else "We will send a 6-digit OTP to your number",
-                fontSize = 14.sp,
+                text = if (isPasswordMode) "Enter your registered password"
+                       else if (loginMethod == LoginMethod.Mobile) "We will send a 6-digit OTP to your number"
+                       else "We will send a 6-digit OTP to your email inbox",
+                fontSize = 13.sp,
                 color = TextMuted
             )
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(18.dp))
 
-        // Mobile Number input row: [+91 box] [Phone field]
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Flag +91 box
+        // Input based on loginMethod
+        if (loginMethod == LoginMethod.Mobile) {
+            // Mobile Number input row: [+91 box] [Phone field]
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Flag +91 box
+                Surface(
+                    modifier = Modifier.width(76.dp).height(54.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(text = "🇮🇳", fontSize = 16.sp)
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "+91",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextDark
+                        )
+                    }
+                }
+
+                // Mobile number input field
+                Surface(
+                    modifier = Modifier.weight(1f).height(54.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        BasicTextField(
+                            value = mobileNumber,
+                            onValueChange = { input ->
+                                mobileNumber = input.filter { it.isDigit() }.take(10)
+                                errorMessage = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = TextDark
+                            ),
+                            cursorBrush = SolidColor(BrandBlue),
+                            decorationBox = { innerTextField ->
+                                if (mobileNumber.isEmpty()) {
+                                    Text(
+                                        text = "Enter 10-digit number",
+                                        color = Color(0xFFA0AEC0),
+                                        fontSize = 15.sp
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        )
+                    }
+                }
+            }
+        } else {
+            // Email Address Input Field
             Surface(
-                modifier = Modifier
-                    .width(76.dp)
-                    .height(54.dp),
+                modifier = Modifier.fillMaxWidth().height(54.dp),
                 shape = RoundedCornerShape(14.dp),
                 color = Color.White,
                 border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
             ) {
                 Row(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = "🇮🇳", fontSize = 16.sp)
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = "+91",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = TextDark
-                    )
-                }
-            }
-
-            // Mobile number input field
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(54.dp),
-                shape = RoundedCornerShape(14.dp),
-                color = Color.White,
-                border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
+                    Text(text = "@", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = BrandBlue)
+                    Spacer(Modifier.width(10.dp))
                     BasicTextField(
-                        value = mobileNumber,
+                        value = emailAddress,
                         onValueChange = { input ->
-                            mobileNumber = input.filter { it.isDigit() }.take(10)
+                            emailAddress = input
                             errorMessage = null
                         },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         textStyle = androidx.compose.ui.text.TextStyle(
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
@@ -655,11 +832,11 @@ private fun LoginWithMobileScreen(
                         ),
                         cursorBrush = SolidColor(BrandBlue),
                         decorationBox = { innerTextField ->
-                            if (mobileNumber.isEmpty()) {
+                            if (emailAddress.isEmpty()) {
                                 Text(
-                                    text = "9876543210",
+                                    text = "Enter your email address",
                                     color = Color(0xFFA0AEC0),
-                                    fontSize = 16.sp
+                                    fontSize = 15.sp
                                 )
                             }
                             innerTextField()
@@ -673,17 +850,13 @@ private fun LoginWithMobileScreen(
         if (isPasswordMode) {
             Spacer(Modifier.height(14.dp))
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp),
+                modifier = Modifier.fillMaxWidth().height(54.dp),
                 shape = RoundedCornerShape(14.dp),
                 color = Color.White,
                 border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -750,23 +923,32 @@ private fun LoginWithMobileScreen(
         // "Send OTP ->" or "Login ->" Royal Blue Pill Button
         Button(
             onClick = {
-                if (mobileNumber.length < 10) {
-                    errorMessage = "Please enter a valid 10-digit mobile number"
-                    return@Button
+                val isEmail = (loginMethod == LoginMethod.Email)
+                val target = if (isEmail) emailAddress.trim() else mobileNumber.trim()
+
+                if (isEmail) {
+                    if (target.isBlank() || !target.contains("@") || !target.contains(".")) {
+                        errorMessage = "Please enter a valid email address"
+                        return@Button
+                    }
+                } else {
+                    if (target.length < 10) {
+                        errorMessage = "Please enter a valid 10-digit mobile number"
+                        return@Button
+                    }
                 }
+
                 if (isPasswordMode) {
                     if (password.isBlank()) {
                         errorMessage = "Please enter your password"
                         return@Button
                     }
-                    onPasswordLoginSuccess(mobileNumber, password)
+                    onPasswordLoginSuccess(target, password)
                 } else {
-                    onSendOtp(mobileNumber)
+                    onSendOtp(target, isEmail)
                 }
             },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp),
+            modifier = Modifier.fillMaxWidth().height(54.dp),
             shape = RoundedCornerShape(27.dp),
             colors = ButtonDefaults.buttonColors(containerColor = BrandBlue)
         ) {
@@ -816,18 +998,23 @@ private fun LoginWithMobileScreen(
 
 @Composable
 private fun OtpVerificationScreen(
-    phone: String,
+    identifier: String,
+    isEmail: Boolean,
+    expectedOtp: String,
+    onResendOtp: () -> String,
     onBack: () -> Unit,
     onVerified: () -> Unit
 ) {
+    var currentOtp by remember(expectedOtp) { mutableStateOf(expectedOtp) }
     var otpDigits by remember { mutableStateOf("") }
-    var countdown by remember { mutableStateOf(99) } // 01:39
+    var countdown by remember { mutableStateOf(30) } // 30s standard resend cooldown
     var resendKey by remember { mutableStateOf(0) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var resendNotice by remember { mutableStateOf<String?>(null) }
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(resendKey) {
-        countdown = 99
+        countdown = 30
         while (countdown > 0) {
             delay(1000)
             countdown -= 1
@@ -869,21 +1056,21 @@ private fun OtpVerificationScreen(
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(10.dp))
 
         // Real Brand Logo
-        TravelBuddyLogo(size = 64.dp)
+        TravelBuddyLogo(size = 56.dp)
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
 
         Text(
             text = "Travel Buddy",
-            fontSize = 28.sp,
+            fontSize = 26.sp,
             fontWeight = FontWeight.Bold,
             color = BrandDeepTeal
         )
 
-        Spacer(Modifier.height(30.dp))
+        Spacer(Modifier.height(24.dp))
 
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(
@@ -894,13 +1081,21 @@ private fun OtpVerificationScreen(
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "We have sent a 6-digit OTP to +91 $phone",
+                text = if (isEmail) "We have sent a dynamic 6-digit OTP to $identifier" else "We have sent a dynamic 6-digit OTP to +91 $identifier",
                 fontSize = 14.sp,
                 color = TextMuted
             )
+            if (isEmail) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "Please check your inbox or spam folder",
+                    fontSize = 12.sp,
+                    color = Color(0xFF0369A1)
+                )
+            }
         }
 
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(24.dp))
 
         // 6 OTP Digit Boxes
         BasicTextField(
@@ -947,10 +1142,27 @@ private fun OtpVerificationScreen(
         Spacer(Modifier.height(10.dp))
 
         Text(
-            text = "Demo OTP: $DEMO_OTP_6 (or $DEMO_OTP_4)",
+            text = if (isEmail) "Enter the 6-digit code sent to $identifier" else "Enter the 6-digit code sent via SMS to +91 $identifier",
             fontSize = 12.sp,
-            color = Color(0xFFA0AEC0)
+            color = Color(0xFF64748B)
         )
+
+        if (resendNotice != null) {
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFFF0FDF4),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBBF7D0))
+            ) {
+                Text(
+                    text = resendNotice ?: "",
+                    color = Color(0xFF16A34A),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
 
         if (errorMessage != null) {
             Spacer(Modifier.height(8.dp))
@@ -962,15 +1174,16 @@ private fun OtpVerificationScreen(
             )
         }
 
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(20.dp))
 
         // "Verify OTP ->" Royal Blue Button
         Button(
             onClick = {
-                if (otpDigits == DEMO_OTP_6 || otpDigits == DEMO_OTP_4 || otpDigits.length >= 4) {
+                if (otpDigits.trim() == currentOtp.trim()) {
                     onVerified()
                 } else {
-                    errorMessage = "Incorrect OTP. Try entering $DEMO_OTP_6"
+                    errorMessage = if (isEmail) "Incorrect OTP. Please enter the 6-digit code sent to $identifier"
+                                   else "Incorrect OTP. Please enter the 6-digit code sent to +91 $identifier"
                 }
             },
             modifier = Modifier
@@ -1008,7 +1221,14 @@ private fun OtpVerificationScreen(
         ) {
             Surface(
                 modifier = Modifier.then(
-                    if (countdown == 0) Modifier.clickable { resendKey += 1 } else Modifier
+                    if (countdown == 0) Modifier.clickable {
+                        val freshOtp = onResendOtp()
+                        currentOtp = freshOtp
+                        otpDigits = ""
+                        errorMessage = null
+                        resendNotice = if (isEmail) "New 6-digit OTP sent to $identifier" else "New 6-digit OTP sent to +91 $identifier"
+                        resendKey += 1
+                    } else Modifier
                 ),
                 shape = RoundedCornerShape(20.dp),
                 color = Color(0xFFF8FAFC),

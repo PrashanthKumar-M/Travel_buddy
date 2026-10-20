@@ -2,28 +2,30 @@ package com.travelbuddy.app
 
 /**
  * Runtime endpoints for Travel Buddy.
- * Supports Local development, Android emulator (10.0.2.2), and Render free hosting.
+ * Connected to live production backend on Render: https://travel-buddy-3vz4.onrender.com
  */
 data class AppConfig(
-    val apiBaseUrl: String = "http://localhost:8080",
-    val webSocketUrl: String = "ws://localhost:8080/ws/live",
-    val renderBackendUrl: String = "https://travelbuddy-api.onrender.com",
+    val apiBaseUrl: String = "https://travel-buddy-3vz4.onrender.com",
+    val webSocketUrl: String = "wss://travel-buddy-3vz4.onrender.com/ws/live",
+    val renderBackendUrl: String = "https://travel-buddy-3vz4.onrender.com",
     val mapStyleUrl: String? = null,
-    /** Enable remote API synchronization when backend is reachable */
+    /** Enable remote API synchronization with live Render server */
     val useRemoteApi: Boolean = true
 ) {
     companion object {
-        /** Default config for Android Emulator */
-        fun forAndroidEmulator() = AppConfig(
-            apiBaseUrl = "http://10.0.2.2:8080",
-            webSocketUrl = "ws://10.0.2.2:8080/ws/live",
+        const val LIVE_RENDER_URL = "https://travel-buddy-3vz4.onrender.com"
+        const val LIVE_WS_URL = "wss://travel-buddy-3vz4.onrender.com/ws/live"
+
+        fun liveRender() = AppConfig(
+            apiBaseUrl = LIVE_RENDER_URL,
+            webSocketUrl = LIVE_WS_URL,
+            renderBackendUrl = LIVE_RENDER_URL,
             useRemoteApi = true
         )
 
-        /** Default config for Render Cloud Deployment */
-        fun forRender(renderBaseUrl: String = "https://travelbuddy-api.onrender.com") = AppConfig(
-            apiBaseUrl = renderBaseUrl.trimEnd('/'),
-            webSocketUrl = renderBaseUrl.replace("https://", "wss://").replace("http://", "ws://").trimEnd('/') + "/ws/live",
+        fun forAndroidEmulator() = AppConfig(
+            apiBaseUrl = "http://10.0.2.2:8080",
+            webSocketUrl = "ws://10.0.2.2:8080/ws/live",
             useRemoteApi = true
         )
     }

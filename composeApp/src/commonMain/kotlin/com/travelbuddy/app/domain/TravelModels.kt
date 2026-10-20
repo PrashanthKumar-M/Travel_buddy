@@ -1,6 +1,6 @@
 package com.travelbuddy.app.domain
 
-data class Trip(val id:String,val name:String,val source:String,val destination:String,val dates:String,val status:TripStatus,val members:List<TripMember>)
+data class Trip(val id:String,val name:String,val source:String,val destination:String,val dates:String,val status:TripStatus,val members:List<TripMember>,val coverImage:String? = null)
 enum class TripStatus { PLANNING, LIVE, COMPLETED }
 data class TripMember(val id:String,val name:String,val color:Long,val isSharingLocation:Boolean)
 data class Expense(val id:String,val title:String,val amount:Double,val paidBy:String,val splitWith:Set<String>)

@@ -78,8 +78,11 @@ android {
     }
 
     val apiBaseUrl = providers.gradleProperty("TRAVEL_BUDDY_API_URL")
-        .getOrElse("http://10.0.2.2:8080")
+        .getOrElse("https://travel-buddy-3vz4.onrender.com")
+    val wsUrl = providers.gradleProperty("TRAVEL_BUDDY_WS_URL")
+        .getOrElse("wss://travel-buddy-3vz4.onrender.com/ws/live")
     defaultConfig {
         buildConfigField("String", "TRAVEL_BUDDY_API_URL", "\"$apiBaseUrl\"")
+        buildConfigField("String", "TRAVEL_BUDDY_WS_URL", "\"$wsUrl\"")
     }
 }

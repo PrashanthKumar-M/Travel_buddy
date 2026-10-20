@@ -4,6 +4,10 @@ plugins {
     id("io.spring.dependency-management") version "1.1.6"
 }
 
+repositories {
+    mavenCentral()
+}
+
 group = "com.travelbuddy"
 version = "1.0.0"
 
@@ -21,6 +25,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-websocket")
     implementation("org.springframework.boot:spring-boot-starter-validation")
+    implementation("org.springframework.boot:spring-boot-starter-mail")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 

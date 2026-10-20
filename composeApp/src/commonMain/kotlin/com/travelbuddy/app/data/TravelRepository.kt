@@ -12,6 +12,7 @@ data class TravelApiConfig(
     val webSocketUrl: String? = null
 ) {
     private val api get() = "${baseUrl.trimEnd('/')}/api"
+    fun requestOtpEndpoint() = "$api/auth/request-otp"
     fun verifyOtpEndpoint() = "$api/auth/verify-otp"
     fun createTripEndpoint() = "$api/trips"
     fun liveSnapshotEndpoint(tripId: String) = "$api/trips/$tripId/live"
@@ -25,13 +26,17 @@ data class TravelApiConfig(
     fun devicesEndpoint() = "$api/devices"
 }
 
-@Serializable data class OtpVerificationRequest(val phone: String, val otp: String)
+@Serializable data class RequestOtpRequest(val phone: String? = null, val email: String? = null, val type: String = "MOBILE")
+@Serializable data class OtpVerificationRequest(val phone: String? = null, val email: String? = null, val otp: String)
 @Serializable data class CreateTripRequest(
+    val id: String? = null,
     val tripName: String,
     val source: String,
     val destination: String,
-    val createdBy: String,
-    val members: List<String>
+    val dates: String = "",
+    val createdBy: String = "usr-1",
+    val coverImage: String? = null,
+    val members: List<String> = emptyList()
 )
 @Serializable data class LocationUpdateRequest(
     val tripId: String,
@@ -65,6 +70,7 @@ data class TravelApiConfig(
 )
 
 interface TravelRepository {
+    suspend fun requestOtp(phone: String? = null, email: String? = null): Result<String?>
     suspend fun verifyOtp(request: OtpVerificationRequest): Result<Unit>
     suspend fun getTrips(): Result<List<Trip>>
     suspend fun createTrip(request: CreateTripRequest): Result<Trip>
