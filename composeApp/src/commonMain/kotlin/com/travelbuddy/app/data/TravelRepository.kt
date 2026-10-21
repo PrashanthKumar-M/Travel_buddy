@@ -15,6 +15,7 @@ data class TravelApiConfig(
     fun requestOtpEndpoint() = "$api/auth/request-otp"
     fun verifyOtpEndpoint() = "$api/auth/verify-otp"
     fun createTripEndpoint() = "$api/trips"
+    fun joinTripEndpoint() = "$api/trips/join"
     fun liveSnapshotEndpoint(tripId: String) = "$api/trips/$tripId/live"
     fun updateLocationEndpoint() = "$api/locations"
     fun addExpenseEndpoint() = "$api/expenses"
@@ -37,6 +38,11 @@ data class TravelApiConfig(
     val createdBy: String = "usr-1",
     val coverImage: String? = null,
     val members: List<String> = emptyList()
+)
+@Serializable data class JoinTripRequest(
+    val tripCode: String,
+    val userId: String = "usr-1",
+    val userName: String = "Traveler"
 )
 @Serializable data class LocationUpdateRequest(
     val tripId: String,
@@ -74,6 +80,7 @@ interface TravelRepository {
     suspend fun verifyOtp(request: OtpVerificationRequest): Result<Unit>
     suspend fun getTrips(): Result<List<Trip>>
     suspend fun createTrip(request: CreateTripRequest): Result<Trip>
+    suspend fun joinTrip(tripCode: String, userId: String = "usr-1", userName: String = "Traveler"): Result<Trip>
     suspend fun liveSnapshot(tripId: String): Result<Trip>
     suspend fun updateLocation(request: LocationUpdateRequest): Result<Unit>
     suspend fun getExpenses(tripId: String): Result<List<Expense>>

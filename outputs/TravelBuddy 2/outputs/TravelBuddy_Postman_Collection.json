@@ -1,0 +1,538 @@
+{
+  "info": {
+    "_postman_id": "7f8b9e01-c892-4d2b-b6d3-9821a7c54102",
+    "name": "Travel Buddy - Full Application API Collection",
+    "description": "Complete REST API & WebSocket Collection for the Travel Buddy Full-Stack Application (Spring Boot 3.3.4 + Kotlin Multiplatform).\n\nEnvironment Variables:\n- baseUrl: http://localhost:8080 (or your Render URL: https://travelbuddy-api.onrender.com)\n- wsUrl: ws://localhost:8080/ws/live (or wss://travelbuddy-api.onrender.com/ws/live)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "wsUrl",
+      "value": "ws://localhost:8080/ws/live",
+      "type": "string"
+    },
+    {
+      "key": "tripId",
+      "value": "trip-coorg-expedition",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "usr-1",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health & Status",
+      "item": [
+        {
+          "name": "Healthcheck",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "health"]
+            },
+            "description": "Used by Render for automated health checks and uptime monitoring."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Authentication & Profile",
+      "item": [
+        {
+          "name": "Request OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+91 98765 43210\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/request-otp",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "request-otp"]
+            }
+          }
+        },
+        {
+          "name": "Verify OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+91 98765 43210\",\n  \"otp\": \"1234\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/verify-otp",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "verify-otp"]
+            }
+          }
+        },
+        {
+          "name": "Get User Profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/profile?userId={{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "profile"],
+              "query": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update User Profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Prashant Kumar\",\n  \"email\": \"prashant@travelbuddy.app\",\n  \"emergencyContactName\": \"Dad\",\n  \"emergencyContactPhone\": \"+91 98765 99999\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/profile?userId={{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "profile"],
+              "query": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/logout?userId={{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "logout"],
+              "query": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Trips",
+      "item": [
+        {
+          "name": "Get All Trips",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/trips",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "trips"]
+            }
+          }
+        },
+        {
+          "name": "Create New Trip",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tripName\": \"Goa Coastal Ride\",\n  \"source\": \"Bangalore, Karnataka\",\n  \"destination\": \"Goa\",\n  \"createdBy\": \"usr-1\",\n  \"members\": [\"usr-1\", \"usr-2\", \"usr-3\"],\n  \"coverImage\": \"https://images.unsplash.com/photo-1507525428034-b723cf961d3e\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/trips",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "trips"]
+            }
+          }
+        },
+        {
+          "name": "Get Trip Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/trips/{{tripId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "trips", "{{tripId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Live Trip Snapshot",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/trips/{{tripId}}/live",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "trips", "{{tripId}}", "live"]
+            }
+          }
+        },
+        {
+          "name": "Join Trip by 6-Digit Code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tripCode\": \"TRIP-7489\",\n  \"userId\": \"usr-5\",\n  \"userName\": \"Vikram\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/trips/join",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "trips", "join"]
+            }
+          }
+        },
+        {
+          "name": "Upload Trip Cover Image",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"imageData\": \"https://images.unsplash.com/photo-1464822759023-fed622ff2c3b\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/trips/{{tripId}}/image",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "trips", "{{tripId}}", "image"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Live GPS Tracking & Locations",
+      "item": [
+        {
+          "name": "Update User Live GPS Location",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tripId\": \"{{tripId}}\",\n  \"userId\": \"{{userId}}\",\n  \"latitude\": 12.9725,\n  \"longitude\": 77.5960,\n  \"speed\": 46.5,\n  \"battery\": 89,\n  \"timestamp\": 1729255000000\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/locations",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "locations"]
+            }
+          }
+        },
+        {
+          "name": "Get All Member Locations in Trip",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/locations/{{tripId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "locations", "{{tripId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Expenses & Group Split",
+      "item": [
+        {
+          "name": "Get Trip Expenses",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/expenses?tripId={{tripId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "expenses"],
+              "query": [
+                {
+                  "key": "tripId",
+                  "value": "{{tripId}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Add Trip Expense",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tripId\": \"{{tripId}}\",\n  \"title\": \"Dinner at Coorg Heritage\",\n  \"amount\": 3200.0,\n  \"paidBy\": \"Prashant\",\n  \"splitType\": \"equal\",\n  \"members\": [\"Prashant\", \"Aarav\", \"Rhea\", \"Kabir\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/expenses",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "expenses"]
+            }
+          }
+        },
+        {
+          "name": "Get Trip Settlement Balances",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/expenses/trips/{{tripId}}/settlements",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "expenses", "trips", "{{tripId}}", "settlements"]
+            }
+          }
+        },
+        {
+          "name": "Get All Split Groups (Trip + Manual Personal)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/expenses/groups",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "expenses", "groups"]
+            }
+          }
+        },
+        {
+          "name": "Create Manual Personal Split Group",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Apartment 302 Flatmates\",\n  \"type\": \"MANUAL_PERSONAL\",\n  \"members\": [\"Prashant\", \"Rohan\", \"Vikram\", \"Sneha\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/expenses/groups",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "expenses", "groups"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Trip Group Chat",
+      "item": [
+        {
+          "name": "Get Trip Chat Messages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/chat/{{tripId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "chat", "{{tripId}}"]
+            }
+          }
+        },
+        {
+          "name": "Send Chat Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"senderId\": \"usr-1\",\n  \"senderName\": \"Prashant\",\n  \"message\": \"Taking fuel stop at Shell Highway, on my way in 10 mins ⛽\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/chat/{{tripId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "chat", "{{tripId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Vehicle & Tag Tracking",
+      "item": [
+        {
+          "name": "List All Tracked Devices",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/devices",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "devices"]
+            }
+          }
+        },
+        {
+          "name": "Get Device Telemetry by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/dev-veh-1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "devices", "dev-veh-1"]
+            }
+          }
+        },
+        {
+          "name": "Update Device Telemetry",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": 12.9730,\n  \"longitude\": 77.5960,\n  \"speedKmh\": 52.0,\n  \"heading\": 185.0,\n  \"ignitionOn\": true,\n  \"batteryPercent\": 91\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/dev-veh-1/telemetry",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "devices", "dev-veh-1", "telemetry"]
+            }
+          }
+        },
+        {
+          "name": "Register Tag Device (Child Bag / Pet / Luggage)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Aarav School Bag\",\n  \"type\": \"CHILD_BAG\",\n  \"imei\": \"863920194029481\",\n  \"label\": \"Child: Aarav (Class 5)\",\n  \"safeZoneName\": \"St. Joseph's Academy\",\n  \"safeZoneLat\": 12.9742,\n  \"safeZoneLng\": 77.6018,\n  \"safeZoneRadiusMeters\": 300.0\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/devices",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "devices"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Safety & Emergency SOS",
+      "item": [
+        {
+          "name": "Trigger Emergency SOS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"usr-1\",\n  \"tripId\": \"{{tripId}}\",\n  \"latitude\": 12.9716,\n  \"longitude\": 77.5946,\n  \"note\": \"Emergency assistance requested on highway\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/sos",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "sos"]
+            }
+          }
+        },
+        {
+          "name": "Get Active SOS Alerts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/sos",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "sos"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

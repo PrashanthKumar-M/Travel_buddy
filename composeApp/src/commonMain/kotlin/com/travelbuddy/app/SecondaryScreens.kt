@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
@@ -189,9 +190,10 @@ internal fun ProfileScreen(
     onLogout: () -> Unit,
     onClose: () -> Unit
 ) {
-    var name by remember { mutableStateOf("Prashant") }
-    var email by remember { mutableStateOf("prashant@example.com") }
+    var name by remember { mutableStateOf(SessionManager.getUserName().ifBlank { "Prashant" }) }
+    var email by remember { mutableStateOf(if (SessionManager.isEmail()) phone else "trio.prashant26@gmail.com") }
     var editingField by remember { mutableStateOf<String?>(null) }
+    var showLogoutConfirm by remember { mutableStateOf(false) }
     val primaryText = if (darkMode) Color(0xFFEAF0F8) else Tb.Navy
     val secondaryText = if (darkMode) Color(0xFFAEB9C8) else Tb.Gray
     Column(Modifier.fillMaxSize().background(if (darkMode) Color(0xFF10151C) else Tb.Page)) {
@@ -227,7 +229,7 @@ internal fun ProfileScreen(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onLogout),
+                    .clickable(onClick = { showLogoutConfirm = true }),
                 shape = RoundedCornerShape(16.dp),
                 color = if (darkMode) Color(0xFF3B151E) else Color(0xFFFEF2F2),
                 border = androidx.compose.foundation.BorderStroke(1.dp, if (darkMode) Color(0xFF881337) else Color(0xFFFECDD3))
@@ -262,6 +264,29 @@ internal fun ProfileScreen(
                 Text("Travel Buddy v0.1.0", color = secondaryText, fontSize = 12.sp)
             }
         }
+    }
+    if (showLogoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirm = false },
+            title = { Text("Log Out?") },
+            text = { Text("Are you sure you want to log out? You will need to enter your OTP the next time you sign in.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutConfirm = false
+                        onLogout()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Tb.Red)
+                ) {
+                    Text("Log Out", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
     editingField?.let { field ->
         AlertDialog(

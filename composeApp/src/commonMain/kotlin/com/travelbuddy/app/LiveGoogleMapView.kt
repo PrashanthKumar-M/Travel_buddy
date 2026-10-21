@@ -90,6 +90,9 @@ fun formatEta(km: Double, speedKmh: Double = 40.0): String {
  */
 @Composable
 fun LiveGoogleMapView(
+    sourceName: String = "Starting Point",
+    sourceLat: Double = 12.9716,
+    sourceLng: Double = 77.5946,
     currentUserLat: Double = 12.9716,
     currentUserLng: Double = 77.5946,
     members: List<TripMember>,
@@ -98,7 +101,7 @@ fun LiveGoogleMapView(
     destinationName: String = "Coorg Valley",
     destinationLat: Double = 12.3375,
     destinationLng: Double = 75.8069,
-    modifier: Modifier = Modifier.fillMaxWidth().height(320.dp),
+    modifier: Modifier = Modifier.fillMaxWidth().height(340.dp),
     onSelectTarget: ((MapTarget) -> Unit)? = null
 ) {
     val darkMode = LocalTravelBuddyDarkMode.current
@@ -128,8 +131,21 @@ fun LiveGoogleMapView(
     )
 
     // Build map targets list
-    val targets = remember(members, vehicle, childBagDevice) {
+    val targets = remember(sourceName, destinationName, members, vehicle, childBagDevice) {
         val list = mutableListOf<MapTarget>()
+
+        // Starting Point (Origin)
+        list.add(
+            MapTarget(
+                id = "origin-point",
+                title = sourceName,
+                subtitle = "Starting Point",
+                latitude = sourceLat,
+                longitude = sourceLng,
+                color = 0xFF27AE60L,
+                type = "SOURCE"
+            )
+        )
 
         // Destination
         list.add(
@@ -255,20 +271,32 @@ fun LiveGoogleMapView(
                     y += step
                 }
 
-                // Main Highway Polyline
-                val path = Path()
-                path.moveTo(cx - 180f * zoomLevel, cy + 130f * zoomLevel)
-                path.cubicTo(
-                    cx - 70f * zoomLevel, cy + 60f * zoomLevel,
-                    cx + 30f * zoomLevel, cy - 40f * zoomLevel,
-                    cx + 170f * zoomLevel, cy - 120f * zoomLevel
+                // Main Google Maps Blue Navigation Polyline (Source to Destination)
+                val routePath = Path()
+                routePath.moveTo(cx - 160f * zoomLevel, cy + 110f * zoomLevel)
+                routePath.cubicTo(
+                    cx - 70f * zoomLevel, cy + 50f * zoomLevel,
+                    cx + 40f * zoomLevel, cy - 30f * zoomLevel,
+                    cx + 160f * zoomLevel, cy - 110f * zoomLevel
                 )
+                // Outer glow road outline
                 drawPath(
-                    path = path,
-                    color = highwayColor,
+                    path = routePath,
+                    color = Color(0x551D64F2),
+                    style = Stroke(
+                        width = 14f * zoomLevel,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        join = androidx.compose.ui.graphics.StrokeJoin.Round
+                    )
+                )
+                // Core Google Maps Vibrant Blue Route Line
+                drawPath(
+                    path = routePath,
+                    color = Color(0xFF1D64F2),
                     style = Stroke(
                         width = 8f * zoomLevel,
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(30f, 10f), 0f)
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        join = androidx.compose.ui.graphics.StrokeJoin.Round
                     )
                 )
 
@@ -313,6 +341,7 @@ fun LiveGoogleMapView(
             // Interactive Markers Layer
             targets.forEachIndexed { index, target ->
                 val baseOffsetX = when (target.type) {
+                    "SOURCE" -> -160f
                     "DESTINATION" -> 160f
                     "VEHICLE" -> -100f
                     "CHILD_BAG" -> 50f
@@ -324,6 +353,7 @@ fun LiveGoogleMapView(
                     }
                 }
                 val baseOffsetY = when (target.type) {
+                    "SOURCE" -> 110f
                     "DESTINATION" -> -110f
                     "VEHICLE" -> 80f
                     "CHILD_BAG" -> 40f
@@ -403,6 +433,12 @@ fun LiveGoogleMapView(
                                         tint = Color.White,
                                         modifier = Modifier.size(18.dp)
                                     )
+                                    "SOURCE" -> Icon(
+                                        Icons.Filled.Navigation,
+                                        contentDescription = "Source",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                     "DESTINATION" -> Icon(
                                         Icons.Filled.LocationOn,
                                         contentDescription = "Destination",
@@ -423,30 +459,36 @@ fun LiveGoogleMapView(
             }
 
             // Top-left: Google Maps Live branding & Coordinates
+            val totalDistance = haversineDistanceKm(sourceLat, sourceLng, destinationLat, destinationLng)
             Surface(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(10.dp),
                 shape = RoundedCornerShape(12.dp),
-                color = (if (darkMode) Color(0xFF1E293B) else Color.White).copy(alpha = 0.92f),
-                shadowElevation = 3.dp
+                color = (if (darkMode) Color(0xFF1E293B) else Color.White).copy(alpha = 0.94f),
+                shadowElevation = 4.dp
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF22C55E))
-                    )
-                    Spacer(Modifier.width(6.dp))
+                Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF22C55E))
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Google Maps Route • ${formatDistance(totalDistance)} (${formatEta(totalDistance)})",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (darkMode) Color.White else Color(0xFF1E293B)
+                        )
+                    }
                     Text(
-                        text = "Google Maps Live • ${formatDistance(haversineDistanceKm(currentUserLat, currentUserLng, destinationLat, destinationLng))} to Dest",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (darkMode) Color.White else Color(0xFF1E293B)
+                        text = "$sourceName ➔ $destinationName",
+                        fontSize = 10.sp,
+                        color = Color(0xFF1D64F2),
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }

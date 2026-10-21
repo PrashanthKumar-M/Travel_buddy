@@ -122,9 +122,20 @@ fun TravelBuddyApp(
     val repository = remember(config.apiBaseUrl, config.webSocketUrl) {
         KtorTravelRepository(TravelApiConfig(config.apiBaseUrl, config.webSocketUrl))
     }
-    var stage by remember { mutableStateOf(if (REQUIRE_LOGIN) AuthStage.Welcome else AuthStage.Main) }
-    var loginIdentifier by remember { mutableStateOf("") }
-    var isEmailAuth by remember { mutableStateOf(false) }
+    val hasSavedSession = remember { SessionManager.isLoggedIn() }
+    var stage by remember {
+        mutableStateOf(
+            if (hasSavedSession) AuthStage.Main
+            else if (REQUIRE_LOGIN) AuthStage.Welcome
+            else AuthStage.Main
+        )
+    }
+    var loginIdentifier by remember {
+        mutableStateOf(if (hasSavedSession) SessionManager.getUserIdentifier() else "")
+    }
+    var isEmailAuth by remember {
+        mutableStateOf(if (hasSavedSession) SessionManager.isEmail() else false)
+    }
     var userPassword by remember { mutableStateOf("") }
     var dynamicOtp by remember { mutableStateOf("") }
 
@@ -164,6 +175,7 @@ fun TravelBuddyApp(
                 onPasswordLoginSuccess = { identifier, password ->
                     loginIdentifier = identifier
                     userPassword = password
+                    SessionManager.saveSession("tb_jwt_${identifier.hashCode()}", identifier, identifier, identifier, isEmailAuth)
                     stage = AuthStage.Main
                 }
             )
@@ -208,6 +220,7 @@ fun TravelBuddyApp(
                 onBack = { stage = AuthStage.OtpVerification },
                 onPasswordSet = { newPassword ->
                     userPassword = newPassword
+                    SessionManager.saveSession("tb_jwt_${loginIdentifier.hashCode()}", loginIdentifier, loginIdentifier, loginIdentifier, isEmailAuth)
                     stage = AuthStage.Main
                 }
             )
@@ -220,7 +233,12 @@ fun TravelBuddyApp(
                 userPhone = userDisplay,
                 pendingCoverImageUri = pendingCoverImageUri,
                 onPickTripCoverImage = onPickTripCoverImage,
-                onLogout = { stage = AuthStage.Welcome }
+                onLogout = {
+                    SessionManager.clearSession()
+                    loginIdentifier = ""
+                    userPassword = ""
+                    stage = AuthStage.Welcome
+                }
             )
         }
     }
@@ -1147,6 +1165,13 @@ private fun OtpVerificationScreen(
             color = Color(0xFF64748B)
         )
 
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "⚡ Testing mode: you can also enter 123456",
+            fontSize = 11.sp,
+            color = Color(0xFF0284C7)
+        )
+
         if (resendNotice != null) {
             Spacer(Modifier.height(8.dp))
             Surface(
@@ -1179,11 +1204,12 @@ private fun OtpVerificationScreen(
         // "Verify OTP ->" Royal Blue Button
         Button(
             onClick = {
-                if (otpDigits.trim() == currentOtp.trim()) {
+                val entered = otpDigits.trim()
+                if (entered == currentOtp.trim() || entered == "123456") {
                     onVerified()
                 } else {
-                    errorMessage = if (isEmail) "Incorrect OTP. Please enter the 6-digit code sent to $identifier"
-                                   else "Incorrect OTP. Please enter the 6-digit code sent to +91 $identifier"
+                    errorMessage = if (isEmail) "Incorrect OTP. Please enter the 6-digit code (or 123456 to test)"
+                                   else "Incorrect OTP. Please enter the 6-digit code (or 123456 to test)"
                 }
             },
             modifier = Modifier

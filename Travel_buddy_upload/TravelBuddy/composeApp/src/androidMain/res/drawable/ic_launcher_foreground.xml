@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Sun -->
+    <path
+        android:fillColor="#FFF59E0B"
+        android:pathData="M54,42m-13,0a13,13 0 1,1 26,0a13,13 0 1,1 -26,0" />
+
+    <!-- Mountain Peaks -->
+    <path
+        android:fillColor="#80475569"
+        android:pathData="M18,68 L42,46 L62,68 Z" />
+    <path
+        android:fillColor="#80334155"
+        android:pathData="M48,68 L68,48 L90,68 Z" />
+
+    <!-- Winding Road -->
+    <path
+        android:fillColor="#FF1E293B"
+        android:pathData="M51,52 C51,52 48,64 45,74 C41,84 32,96 28,102 L80,102 C76,96 67,84 63,74 C60,64 57,52 57,52 Z" />
+
+    <!-- Road Edge Curbs (Green Emerald) -->
+    <path
+        android:strokeColor="#FF22C55E"
+        android:strokeWidth="1.5"
+        android:pathData="M51,52 C51,52 48,64 45,74 C41,84 32,96 28,102" />
+    <path
+        android:strokeColor="#FF22C55E"
+        android:strokeWidth="1.5"
+        android:pathData="M57,52 C57,52 60,64 63,74 C67,84 76,96 80,102" />
+
+    <!-- Road Center Dashed Line -->
+    <path
+        android:strokeColor="#FFFBBF24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M54,58 L54,63 M54,69 L53.5,76 M53,83 L53,91 M53,96 L53,102" />
+
+    <!-- Destination Pin (Red) -->
+    <path
+        android:fillColor="#FFEF4444"
+        android:pathData="M54,30 C49.58,30 46,33.58 46,38 C46,43.5 54,52 54,52 C54,52 62,43.5 62,38 C62,33.58 58.42,30 54,30 Z" />
+
+    <!-- Pin Center (White) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,38m-3.5,0a3.5,3.5 0 1,1 7,0a3.5,3.5 0 1,1 -7,0" />
+</vector>

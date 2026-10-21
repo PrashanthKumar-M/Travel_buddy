@@ -96,49 +96,11 @@ public class TravelBuddyStateService {
         trips.put(tripId, seededTrip);
         tripCodeToId.put(tripCode, tripId);
 
-        // Seed Trip Chat
+        // Seed Initial Trip Chat
         List<ChatMessage> chat = new CopyOnWriteArrayList<>();
-        chat.add(new ChatMessage("c-1", tripId, "usr-2", "Aarav", "Toll gate crossed! Meeting at Shell petrol pump ahead.", System.currentTimeMillis() - 600000));
-        chat.add(new ChatMessage("c-2", tripId, "usr-3", "Rhea", "Got it, I'm right behind Prashant's bike.", System.currentTimeMillis() - 480000));
-        chat.add(new ChatMessage("c-3", tripId, "usr-1", "Prashant", "Live tracking is on. Everyone maintain 45-50 km/h speed.", System.currentTimeMillis() - 300000));
         tripChats.put(tripId, chat);
 
-        // Seed Trip Split Group
-        String tripGroupId = "grp-trip-coorg";
-        ExpenseGroup tripGroup = new ExpenseGroup(
-                tripGroupId,
-                "Western Ghats Expedition (Trip)",
-                GroupType.TRIP,
-                tripId,
-                List.of("Prashant", "Aarav", "Rhea", "Kabir"),
-                System.currentTimeMillis()
-        );
-        expenseGroups.put(tripGroupId, tripGroup);
-
-        List<Expense> seededExpenses = new CopyOnWriteArrayList<>();
-        seededExpenses.add(new Expense("exp-1", tripGroupId, tripId, "Highway Fuel (Shell)", 4200.0, "Prashant", "equal", Set.of("Prashant", "Aarav", "Rhea", "Kabir"), Map.of(), System.currentTimeMillis() - 3600000));
-        seededExpenses.add(new Expense("exp-2", tripGroupId, tripId, "Hilltop Resort Booking", 9600.0, "Aarav", "equal", Set.of("Prashant", "Aarav", "Rhea", "Kabir"), Map.of(), System.currentTimeMillis() - 7200000));
-        seededExpenses.add(new Expense("exp-3", tripGroupId, tripId, "Breakfast & Traditional Chai", 1150.0, "Rhea", "equal", Set.of("Prashant", "Aarav", "Rhea", "Kabir"), Map.of(), System.currentTimeMillis() - 10800000));
-        groupExpenses.put(tripGroupId, seededExpenses);
-
-        // Seed Manual Personal Split Group (independent of any trip!)
-        String manualGroupId = "grp-flatmates-hometeam";
-        ExpenseGroup manualGroup = new ExpenseGroup(
-                manualGroupId,
-                "Apartment 302 Roommates",
-                GroupType.MANUAL_PERSONAL,
-                null,
-                List.of("Prashant", "Rohan", "Vikram", "Sneha"),
-                System.currentTimeMillis()
-        );
-        expenseGroups.put(manualGroupId, manualGroup);
-
-        List<Expense> seededManualExpenses = new CopyOnWriteArrayList<>();
-        seededManualExpenses.add(new Expense("exp-m1", manualGroupId, null, "Broadband Internet (500 Mbps)", 1499.0, "Prashant", "equal", Set.of("Prashant", "Rohan", "Vikram", "Sneha"), Map.of(), System.currentTimeMillis() - 86400000));
-        seededManualExpenses.add(new Expense("exp-m2", manualGroupId, null, "Groceries & Milk Subscriptions", 2800.0, "Vikram", "equal", Set.of("Prashant", "Rohan", "Vikram", "Sneha"), Map.of(), System.currentTimeMillis() - 43200000));
-        groupExpenses.put(manualGroupId, seededManualExpenses);
-
-        // Seed Tracking Devices:
+        // Tracking Devices:
         // 1. Vehicle GPS Tracker
         TrackingDevice bike = new TrackingDevice(
                 "dev-veh-1",
@@ -480,7 +442,11 @@ public class TravelBuddyStateService {
     }
 
     public Optional<Trip> joinTripByCode(String code, String userId, String userName) {
-        String tripId = tripCodeToId.get(code.toUpperCase().trim());
+        String cleanCode = code != null ? code.trim() : "";
+        String tripId = tripCodeToId.get(cleanCode.toUpperCase());
+        if (tripId == null) {
+            tripId = trips.containsKey(cleanCode) ? cleanCode : (trips.containsKey(cleanCode.toLowerCase()) ? cleanCode.toLowerCase() : null);
+        }
         if (tripId == null) return Optional.empty();
         Trip trip = trips.get(tripId);
         if (trip == null) return Optional.empty();

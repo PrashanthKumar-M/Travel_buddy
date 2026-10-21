@@ -58,6 +58,16 @@ class KtorTravelRepository(
         response.bodyAsText().toTripOrFallback(request)
     }
 
+    override suspend fun joinTrip(tripCode: String, userId: String, userName: String): Result<Trip> = runCatching {
+        val response = client.post(config.joinTripEndpoint()) {
+            contentType(ContentType.Application.Json)
+            setBody(JoinTripRequest(tripCode = tripCode, userId = userId, userName = userName))
+        }
+        response.requireSuccess()
+        val text = response.bodyAsText()
+        text.toTripOrFallback(null, tripCode)
+    }
+
     override suspend fun liveSnapshot(tripId: String): Result<Trip> = runCatching {
         val response = client.get(config.liveSnapshotEndpoint(tripId))
         response.requireSuccess()

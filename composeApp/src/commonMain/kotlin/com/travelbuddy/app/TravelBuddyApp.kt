@@ -62,6 +62,7 @@ import com.travelbuddy.app.data.CreateTripRequest
 import com.travelbuddy.app.data.KtorTravelRepository
 import com.travelbuddy.app.data.RealtimeLocationGateway
 import com.travelbuddy.app.data.TravelApiConfig
+import com.travelbuddy.app.data.TravelRepository
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
@@ -151,21 +152,25 @@ internal fun TravelBuddyMain(
     val repository = remember(config.apiBaseUrl, config.webSocketUrl) {
         KtorTravelRepository(TravelApiConfig(config.apiBaseUrl, config.webSocketUrl))
     }
-    val starterMembers = remember { sampleMembers().take(4) }
+    val currentUserName = SessionManager.getUserName().ifBlank { userPhone }
+    val currentUserId = SessionManager.getUserIdentifier().ifBlank { "usr-me" }
+    val starterMembers = remember(currentUserName, currentUserId) {
+        listOf(TripMember(currentUserId, currentUserName, 0xFF1D64F2L, true))
+    }
     var activeTrip by remember {
         mutableStateOf(
             Trip(
-                id = "coorg-ride",
-                name = "Coorg Ride",
-                source = "Bengaluru, Karnataka",
-                destination = "Coorg, Karnataka",
-                dates = "12 Sep - 14 Sep 2026",
+                id = "trip-active-1",
+                name = "My Active Trip",
+                source = "Bengaluru",
+                destination = "Coorg",
+                dates = "Upcoming",
                 status = TripStatus.LIVE,
                 members = starterMembers
             )
         )
     }
-    var apiMessage by remember { mutableStateOf("4/4 members online") }
+    var apiMessage by remember { mutableStateOf("1/1 members online") }
     var activeTripCover by remember { mutableStateOf<String?>(null) }
     var tripCovers by remember { mutableStateOf(emptyMap<String, String>()) }
     var trips by remember { mutableStateOf(listOf(activeTrip)) }
@@ -184,9 +189,7 @@ internal fun TravelBuddyMain(
     var members by remember { mutableStateOf(starterMembers) }
 
     var expenses by remember {
-        mutableStateOf(
-            sampleExpenses().map { expense -> expense.copy(splitWith = starterMembers.map { it.id }.toSet()) }
-        )
+        mutableStateOf<List<Expense>>(emptyList())
     }
 
     var vehicle by remember { mutableStateOf(sampleVehicle()) }
@@ -458,8 +461,9 @@ internal fun TravelBuddyMain(
                     }
 
                     AppTab.Track -> {
-
                         TrackingScreen(
+                            activeTrip = activeTrip,
+                            repository = repository,
                             members = members,
                             vehicle = vehicle,
                             liveLocationCount = liveLocationCount,
@@ -1349,30 +1353,34 @@ private fun CreateTripDialog(
     onDismiss: () -> Unit,
     onCreated: (CreateTripData) -> Unit
 ) {
-    var source by remember { mutableStateOf("Bengaluru, Karnataka") }
-    var destination by remember { mutableStateOf("Coorg, Karnataka") }
-    var title by remember { mutableStateOf("Coorg Ride") }
-    var startDate by remember { mutableStateOf("18/10/2026") }
-    var endDate by remember { mutableStateOf("20/10/2026") }
+    val scope = rememberCoroutineScope()
+    var source by remember { mutableStateOf("") }
+    var destination by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var startDate by remember { mutableStateOf("Today") }
+    var endDate by remember { mutableStateOf("Tomorrow") }
     var flagOffTime by remember { mutableStateOf("") }
     var reportTime by remember { mutableStateOf("") }
     var multiDay by remember { mutableStateOf(false) }
     var rideType by remember { mutableStateOf(RideType.OPEN_TO_ALL) }
     var notes by remember { mutableStateOf("") }
     var selectedMemberIds by remember { mutableStateOf(availableMembers.map { it.id }.toSet()) }
-    var vehicleDetails by remember { mutableStateOf("KA01AB1234 · Sedan") }
+    var vehicleDetails by remember { mutableStateOf("") }
     var coverImage by remember { mutableStateOf(pendingCoverImageUri.orEmpty()) }
     var picker by remember { mutableStateOf<String?>(null) }
     var reminderEnabled by remember { mutableStateOf(true) }
-    val generatedTripId = remember { "trip-" + (100000..999999).random() }
+    val generatedTripId = remember { "TB-" + (1000..9999).random() }
+
+    var destSuggestions by remember { mutableStateOf<List<PlaceSuggestion>>(emptyList()) }
+    var sourceSuggestions by remember { mutableStateOf<List<PlaceSuggestion>>(emptyList()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Create Trip") },
+        title = { Text("Create Real-Time Trip") },
         text = {
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.height(460.dp)
+                modifier = Modifier.height(480.dp)
             ) {
                 item {
                     Surface(
@@ -1386,15 +1394,15 @@ private fun CreateTripDialog(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column {
-                                Text("Dynamic Trip ID", fontSize = 11.sp, color = Color(0xFF64748B))
-                                Text(generatedTripId, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                                Text("Live Trip Code (Share with friends to track)", fontSize = 10.sp, color = Color(0xFF64748B))
+                                Text(generatedTripId, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                             }
                             Surface(
                                 color = Color(0xFFDCFCE7),
                                 shape = RoundedCornerShape(6.dp)
                             ) {
                                 Text(
-                                    text = "AUTO-GENERATED",
+                                    text = "REALTIME ID",
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF166534),
@@ -1405,22 +1413,106 @@ private fun CreateTripDialog(
                     }
                 }
                 item {
-                    OutlinedTextField(
-                        value = destination,
-                        onValueChange = { destination = it },
-                        label = { Text("Destination") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
+                    Column {
+                        OutlinedTextField(
+                            value = destination,
+                            onValueChange = {
+                                destination = it
+                                if (title.isBlank() || title.startsWith("Trip to ")) {
+                                    title = "Trip to ${it.split(",")[0]}"
+                                }
+                                scope.launch {
+                                    destSuggestions = PlaceSearchService.searchPlaces(it)
+                                }
+                            },
+                            label = { Text("Destination (e.g. Coorg, Goa, Ooty)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            leadingIcon = {
+                                Icon(Icons.Filled.LocationOn, contentDescription = "Destination", tint = Color(0xFFEB5757))
+                            }
+                        )
+                        if (destSuggestions.isNotEmpty()) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1))
+                            ) {
+                                Column(modifier = Modifier.padding(4.dp)) {
+                                    destSuggestions.forEach { suggestion ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    destination = suggestion.name
+                                                    title = "Trip to ${suggestion.name.split(",")[0]}"
+                                                    destSuggestions = emptyList()
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Filled.LocationOn, contentDescription = null, tint = Color(0xFF1D64F2), modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Column {
+                                                Text(suggestion.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                Text(suggestion.description, fontSize = 10.sp, color = Color(0xFF64748B), maxLines = 1)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 item {
-                    OutlinedTextField(
-                        value = source,
-                        onValueChange = { source = it },
-                        label = { Text("Starting location") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
+                    Column {
+                        OutlinedTextField(
+                            value = source,
+                            onValueChange = {
+                                source = it
+                                scope.launch {
+                                    sourceSuggestions = PlaceSearchService.searchPlaces(it)
+                                }
+                            },
+                            label = { Text("Starting Location (e.g. Bengaluru, Mumbai)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            leadingIcon = {
+                                Icon(Icons.Filled.LocationOn, contentDescription = "Source", tint = Color(0xFF27AE60))
+                            }
+                        )
+                        if (sourceSuggestions.isNotEmpty()) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1))
+                            ) {
+                                Column(modifier = Modifier.padding(4.dp)) {
+                                    sourceSuggestions.forEach { suggestion ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    source = suggestion.name
+                                                    sourceSuggestions = emptyList()
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Filled.LocationOn, contentDescription = null, tint = Color(0xFF27AE60), modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Column {
+                                                Text(suggestion.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                Text(suggestion.description, fontSize = 10.sp, color = Color(0xFF64748B), maxLines = 1)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 item {
                     OutlinedTextField(
@@ -1740,6 +1832,8 @@ private fun RideTypeButton(
 
 @Composable
 private fun TrackingScreen(
+    activeTrip: Trip? = null,
+    repository: TravelRepository? = null,
     members: List<TripMember>,
     vehicle: Vehicle,
     liveLocationCount: Int,
@@ -1747,23 +1841,17 @@ private fun TrackingScreen(
     initialMode: Int,
     onSaveVehicle: (Vehicle) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var selectedMode by remember(initialMode) { mutableStateOf(initialMode.coerceIn(0, 2)) }
     var showVehicleEditor by remember { mutableStateOf(false) }
     var showAddTagDialog by remember { mutableStateOf(false) }
 
     // State for live tracked buddies
-    var trackingCode by remember { mutableStateOf("TRIP-7489") }
+    var trackingCode by remember(activeTrip) { mutableStateOf(activeTrip?.id ?: "TRIP-1001") }
     var joinCodeInput by remember { mutableStateOf("") }
     var codeStatusMessage by remember { mutableStateOf<String?>(null) }
-    var activeBuddies by remember {
-        mutableStateOf(
-            if (members.isNotEmpty()) members else listOf(
-                TripMember("usr-1", "Prashant (You)", 0xFF2F80EDL, true),
-                TripMember("usr-2", "Aarav", 0xFF27AE60L, true),
-                TripMember("usr-3", "Rhea", 0xFFF2994AL, true),
-                TripMember("usr-4", "Kabir", 0xFF9B51E0L, true)
-            )
-        )
+    var activeBuddies by remember(members) {
+        mutableStateOf(members)
     }
 
     // State for child school bag / personal tag device
@@ -1825,6 +1913,8 @@ private fun TrackingScreen(
                 ) {
                     item {
                         LiveGoogleMapView(
+                            sourceName = activeTrip?.source?.ifBlank { "Bengaluru" } ?: "Starting Point",
+                            destinationName = activeTrip?.destination?.ifBlank { "Coorg Valley" } ?: "Trip Destination",
                             members = activeBuddies,
                             vehicle = vehicle,
                             childBagDevice = childBagDevice,
@@ -1884,16 +1974,32 @@ private fun TrackingScreen(
                                     Button(
                                         onClick = {
                                             if (joinCodeInput.isNotBlank()) {
-                                                val newBuddyName = "Buddy ${joinCodeInput.takeLast(4)}"
-                                                val colors = listOf(0xFF9B51E0L, 0xFFF2994AL, 0xFF27AE60L, 0xFFEB5757L)
-                                                activeBuddies = activeBuddies + TripMember(
-                                                    id = "user-${joinCodeInput.hashCode()}",
-                                                    name = newBuddyName,
-                                                    color = colors[activeBuddies.size % colors.size],
-                                                    isSharingLocation = true
-                                                )
-                                                codeStatusMessage = "Joined session $joinCodeInput! Now tracking $newBuddyName live on Google Map."
-                                                joinCodeInput = ""
+                                                val inputCode = joinCodeInput.trim()
+                                                val currentUserName = SessionManager.getUserName().ifBlank { "Traveler" }
+                                                scope.launch {
+                                                    val res = repository?.joinTrip(
+                                                        tripCode = inputCode,
+                                                        userId = "usr-${inputCode.hashCode()}",
+                                                        userName = currentUserName
+                                                    )
+                                                    if (res != null && res.isSuccess) {
+                                                        val joinedTrip = res.getOrThrow()
+                                                        activeBuddies = joinedTrip.members
+                                                        codeStatusMessage = "Successfully connected to '${joinedTrip.name}' (Code: $inputCode)! Live location tracking active."
+                                                        joinCodeInput = ""
+                                                    } else {
+                                                        val newBuddyName = "Buddy ${inputCode.takeLast(4)}"
+                                                        val colors = listOf(0xFF9B51E0L, 0xFFF2994AL, 0xFF27AE60L, 0xFFEB5757L)
+                                                        activeBuddies = activeBuddies + TripMember(
+                                                            id = "user-${inputCode.hashCode()}",
+                                                            name = newBuddyName,
+                                                            color = colors[activeBuddies.size % colors.size],
+                                                            isSharingLocation = true
+                                                        )
+                                                        codeStatusMessage = "Tracking active for session $inputCode ($newBuddyName) on Google Map."
+                                                        joinCodeInput = ""
+                                                    }
+                                                }
                                             }
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = Blue)
@@ -2869,39 +2975,9 @@ private fun ExpensesScreen(
     var settledList by remember { mutableStateOf(setOf<String>()) }
     var settleToastMessage by remember { mutableStateOf<String?>(null) }
 
-    // Manual Personal Split Groups state
+    // Manual Personal Split Groups state (fully dynamic)
     var manualGroups by remember {
-        mutableStateOf(
-            listOf(
-                PersonalSplitGroup(
-                    id = "grp-roommates",
-                    name = "Apartment 302 Roommates",
-                    members = listOf(
-                        TripMember("m1", "Prashant", 0xFF2F80EDL, true),
-                        TripMember("m2", "Rohan", 0xFF27AE60L, true),
-                        TripMember("m3", "Vikram", 0xFFF2994AL, true),
-                        TripMember("m4", "Sneha", 0xFF9B51E0L, true)
-                    ),
-                    expenses = listOf(
-                        Expense("e1", "Broadband 500Mbps", 1499.0, "m1", setOf("m1", "m2", "m3", "m4")),
-                        Expense("e2", "Monthly Groceries & Milk", 3200.0, "m3", setOf("m1", "m2", "m3", "m4")),
-                        Expense("e3", "Electricity & Water Bill", 1850.0, "m2", setOf("m1", "m2", "m3", "m4"))
-                    )
-                ),
-                PersonalSplitGroup(
-                    id = "grp-dinner",
-                    name = "Weekend Cafe & Dinner",
-                    members = listOf(
-                        TripMember("m1", "Prashant", 0xFF2F80EDL, true),
-                        TripMember("m5", "Ananya", 0xFFEB5757L, true),
-                        TripMember("m6", "Dev", 0xFF2D9CDBL, true)
-                    ),
-                    expenses = listOf(
-                        Expense("e4", "Brewery & Pizzas", 4350.0, "m1", setOf("m1", "m5", "m6"))
-                    )
-                )
-            )
-        )
+        mutableStateOf<List<PersonalSplitGroup>>(emptyList())
     }
     var selectedManualGroupIndex by remember { mutableStateOf(0) }
 
@@ -2971,23 +3047,47 @@ private fun ExpensesScreen(
                         Text("+ New Group", fontWeight = FontWeight.Bold)
                     }
                 }
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(manualGroups.indices.toList()) { idx ->
-                        val grp = manualGroups[idx]
-                        val isSelected = idx == selectedManualGroupIndex
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = if (isSelected) Blue else if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) Blue else Color(0xFFCBD5E1)),
-                            modifier = Modifier.clickable { selectedManualGroupIndex = idx }
+                if (manualGroups.isEmpty()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color(0xFFF1F5F9))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text(
-                                grp.name,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                color = if (isSelected) Color.White else tbTextColor(),
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 12.sp
-                            )
+                            Text("No personal split groups yet", fontWeight = FontWeight.Bold, color = tbTextColor())
+                            Spacer(Modifier.height(4.dp))
+                            Text("Create a group to split bills for dinners, rent, or weekend plans.", fontSize = 12.sp, color = tbSubtextColor())
+                            Spacer(Modifier.height(8.dp))
+                            Button(
+                                onClick = { showCreateGroupDialog = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                            ) {
+                                Text("+ Create New Group")
+                            }
+                        }
+                    }
+                } else {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(manualGroups.indices.toList()) { idx ->
+                            val grp = manualGroups[idx]
+                            val isSelected = idx == selectedManualGroupIndex
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (isSelected) Blue else if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) Blue else Color(0xFFCBD5E1)),
+                                modifier = Modifier.clickable { selectedManualGroupIndex = idx }
+                            ) {
+                                Text(
+                                    grp.name,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                    color = if (isSelected) Color.White else tbTextColor(),
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 12.sp
+                                )
+                            }
                         }
                     }
                 }
@@ -3162,7 +3262,7 @@ private fun CreateManualGroupDialog(
     onCreate: (PersonalSplitGroup) -> Unit
 ) {
     var groupName by remember { mutableStateOf("") }
-    var memberNamesInput by remember { mutableStateOf("Prashant, ") }
+    var memberNamesInput by remember { mutableStateOf("${SessionManager.getUserName().ifBlank { "You" }}, ") }
 
     AlertDialog(
         onDismissRequest = onDismiss,

@@ -1,0 +1,3987 @@
+
+package com.travelbuddy.app
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.travelbuddy.app.domain.Expense
+import com.travelbuddy.app.domain.ExpenseCalculator
+import com.travelbuddy.app.domain.Trip
+import com.travelbuddy.app.domain.TripMember
+import com.travelbuddy.app.domain.TripStatus
+import com.travelbuddy.app.domain.Vehicle
+import com.travelbuddy.app.data.AddExpenseRequest
+import com.travelbuddy.app.data.CreateTripRequest
+import com.travelbuddy.app.data.KtorTravelRepository
+import com.travelbuddy.app.data.RealtimeLocationGateway
+import com.travelbuddy.app.data.TravelApiConfig
+import kotlinx.coroutines.launch
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Switch
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.outlined.MyLocation
+import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.ui.graphics.vector.ImageVector
+
+
+// ============================================================
+// COLORS
+// ============================================================
+
+private val Navy = Color(0xFF1F2937)
+private val Blue = Color(0xFF2F80ED)
+private val Green = Color(0xFF27AE60)
+private val Soft = Color(0xFFEAF3FF)
+private val Background = Color(0xFFFAF7FC)
+private val Red = Color(0xFFE53935)
+private val Orange = Color(0xFFE67E22)
+internal val LocalTravelBuddyDarkMode = staticCompositionLocalOf { false }
+
+@Composable
+internal fun tbTextColor(): Color = if (LocalTravelBuddyDarkMode.current) Color(0xFFF8FAFC) else Color(0xFF1F2937)
+
+@Composable
+internal fun tbSubtextColor(): Color = if (LocalTravelBuddyDarkMode.current) Color(0xFF94A3B8) else Color(0xFF6B7280)
+
+@Composable
+internal fun tbCardBg(): Color = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White
+
+@Composable
+internal fun tbCardBorder(): Color = if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE5E7EB)
+
+
+// ============================================================
+// MAIN APP
+// ============================================================
+
+@Composable
+internal fun TravelBuddyMain(
+    config: AppConfig,
+    userPhone: String,
+    pendingCoverImageUri: String?,
+    onPickTripCoverImage: (() -> Unit)?,
+    onLogout: () -> Unit
+) {
+    var selectedTab by remember {
+        mutableStateOf(AppTab.Home)
+    }
+    var trackingMode by remember { mutableStateOf(0) }
+    var darkMode by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val repository = remember(config.apiBaseUrl, config.webSocketUrl) {
+        KtorTravelRepository(TravelApiConfig(config.apiBaseUrl, config.webSocketUrl))
+    }
+    val starterMembers = remember { sampleMembers().take(4) }
+    var activeTrip by remember {
+        mutableStateOf(
+            Trip(
+                id = "coorg-ride",
+                name = "Coorg Ride",
+                source = "Bengaluru, Karnataka",
+                destination = "Coorg, Karnataka",
+                dates = "12 Sep - 14 Sep 2026",
+                status = TripStatus.LIVE,
+                members = starterMembers
+            )
+        )
+    }
+    var apiMessage by remember { mutableStateOf("4/4 members online") }
+    var activeTripCover by remember { mutableStateOf<String?>(null) }
+    var tripCovers by remember { mutableStateOf(emptyMap<String, String>()) }
+    var trips by remember { mutableStateOf(listOf(activeTrip)) }
+    var settlements by remember { mutableStateOf(emptyList<com.travelbuddy.app.domain.Settlement>()) }
+    var liveLocationCount by remember { mutableStateOf(0) }
+
+    var sosSent by remember { mutableStateOf(false) }
+    var showSosDialog by remember { mutableStateOf(false) }
+    var showEmergencyContacts by remember { mutableStateOf(false) }
+    var overlay by remember { mutableStateOf<Overlay?>(null) }
+
+    var emergencyContacts by remember {
+        mutableStateOf(sampleEmergencyContacts())
+    }
+
+    var members by remember { mutableStateOf(starterMembers) }
+
+    var expenses by remember {
+        mutableStateOf(
+            sampleExpenses().map { expense -> expense.copy(splitWith = starterMembers.map { it.id }.toSet()) }
+        )
+    }
+
+    var vehicle by remember { mutableStateOf(sampleVehicle()) }
+
+    LaunchedEffect(config.useRemoteApi) {
+        if (!config.useRemoteApi) return@LaunchedEffect
+        repository.getTrips().onSuccess { fetchedTrips ->
+            if (fetchedTrips.isNotEmpty()) {
+                trips = fetchedTrips
+                activeTrip = fetchedTrips.first()
+                members = activeTrip.members
+                apiMessage = "Connected to backend • ${trips.size} trips synced"
+            }
+        }
+    }
+
+    LaunchedEffect(activeTrip.id, config.useRemoteApi) {
+        if (!config.useRemoteApi) return@LaunchedEffect
+        repository.liveSnapshot(activeTrip.id)
+            .onSuccess { snapshot ->
+                activeTrip = snapshot
+                members = snapshot.members
+                apiMessage = "Live snapshot refreshed."
+            }
+            .onFailure { apiMessage = "Live snapshot unavailable: ${it.message ?: "unknown error"}" }
+        repository.getExpenses(activeTrip.id).onSuccess { fetchedExpenses ->
+            if (fetchedExpenses.isNotEmpty()) {
+                expenses = fetchedExpenses
+            }
+        }
+        repository.settlements(activeTrip.id).onSuccess { settlements = it }
+    }
+
+    LaunchedEffect(activeTrip.id, config.webSocketUrl, config.useRemoteApi) {
+        if (!config.useRemoteApi) return@LaunchedEffect
+        val tripId = activeTrip.id
+        val socketUrl = config.webSocketUrl ?: return@LaunchedEffect
+        val gateway = RealtimeLocationGateway(socketUrl)
+        try {
+            gateway.collect { event ->
+                if (event.tripId == tripId) {
+                    liveLocationCount += 1
+                    members = members.map { member ->
+                        if (member.id == event.userId) member.copy(isSharingLocation = true) else member
+                    }
+                    apiMessage = "Live location updated."
+                }
+            }
+        } catch (error: Throwable) {
+            apiMessage = "Live connection disconnected: ${error.message ?: "retrying when reopened"}"
+        } finally {
+            gateway.close()
+        }
+    }
+
+    LaunchedEffect(activeTrip.id, config.useRemoteApi) {
+        if (config.useRemoteApi) return@LaunchedEffect
+        while (true) {
+            kotlinx.coroutines.delay(4000)
+            liveLocationCount += 1
+            vehicle = vehicle.copy(
+                latitude = vehicle.latitude + kotlin.random.Random.nextDouble(-0.0006, 0.0006),
+                longitude = vehicle.longitude + kotlin.random.Random.nextDouble(-0.0006, 0.0006),
+                speedKmh = (55.0 + kotlin.random.Random.nextDouble(-4.0, 7.0)).coerceIn(35.0, 90.0),
+                isOnline = true
+            )
+        }
+    }
+
+    MaterialTheme(
+        colorScheme = if (darkMode) darkColorScheme(
+            primary = Blue, secondary = Green, surface = Color(0xFF1B2430), background = Color(0xFF10151C)
+        ) else lightColorScheme(
+            primary = Blue,
+            secondary = Green,
+            surface = Color.White,
+            background = Background
+        )
+    ) {
+        CompositionLocalProvider(LocalTravelBuddyDarkMode provides darkMode) {
+
+        Scaffold(
+
+            modifier = Modifier.fillMaxSize(),
+
+            containerColor = if (darkMode) Color(0xFF10151C) else Background,
+
+            topBar = {
+                if (selectedTab != AppTab.More) {
+                    Header(
+                        sosSent = sosSent,
+                        onSos = {
+                            showSosDialog = true
+                        }
+                    )
+                }
+            },
+
+            bottomBar = {
+
+                NavigationBar(
+                    modifier = Modifier.navigationBarsPadding(),
+                    containerColor = if (darkMode) Color(0xFF151C26) else Color.White,
+                    tonalElevation = 2.dp
+                ) {
+                    listOf(AppTab.Home, AppTab.Trips, AppTab.Track, AppTab.Expenses, AppTab.More).forEach { item ->
+                        val selected = item == selectedTab
+                        val icon = when (item) {
+                            AppTab.Home -> if (selected) Icons.Filled.Home else Icons.Outlined.Home
+                            AppTab.Trips -> if (selected) Icons.Filled.Map else Icons.Outlined.Map
+                            AppTab.Track -> if (selected) Icons.Filled.MyLocation else Icons.Outlined.MyLocation
+                            AppTab.Expenses -> if (selected) Icons.Filled.AccountBalanceWallet else Icons.Outlined.AccountBalanceWallet
+                            AppTab.More -> if (selected) Icons.Filled.Person else Icons.Outlined.Person
+                            AppTab.Chat -> if (selected) Icons.Filled.ChatBubble else Icons.Outlined.ChatBubbleOutline
+                        }
+
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = {
+                                selectedTab = item
+                            },
+                            icon = {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = item.label,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = item.label,
+                                    maxLines = 1,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                            },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Blue,
+                                selectedTextColor = Blue,
+                                unselectedIconColor = Color(0xFF64748B),
+                                unselectedTextColor = Color(0xFF64748B),
+                                indicatorColor = Color.Transparent
+                            )
+                        )
+                    }
+                }
+            }
+
+        ) { paddingValues ->
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+            ) {
+
+                when (selectedTab) {
+
+                    AppTab.Home -> {
+
+                        HomeScreen(
+                            members = members,
+                            tripName = activeTrip.name,
+                            tripDates = activeTrip.dates,
+                            coverImage = activeTripCover,
+                            apiMessage = apiMessage,
+                            navigate = {
+                                trackingMode = 0
+                                selectedTab = it
+                            },
+                            openFriendsAndFamily = {
+                                trackingMode = 0
+                                selectedTab = AppTab.Track
+                            }
+                        )
+                    }
+
+                    AppTab.Trips -> {
+
+                        TripsScreen(
+                            activeTrip = activeTrip,
+                            trips = trips,
+                            availableMembers = members,
+                            pendingCoverImageUri = pendingCoverImageUri,
+                            onPickTripCoverImage = onPickTripCoverImage,
+                            onSelect = { trip ->
+                                activeTrip = trip
+                                activeTripCover = tripCovers[trip.id]
+                                members = trip.members
+                                apiMessage = "${trip.members.count { it.isSharingLocation }}/${trip.members.size} members online"
+                            },
+                            onDelete = { trip ->
+                                val remaining = trips.filterNot { it.id == trip.id }
+                                trips = remaining
+                                if (trip.id == activeTrip.id && remaining.isNotEmpty()) {
+                                    activeTrip = remaining.first()
+                                    members = activeTrip.members
+                                    expenses = emptyList()
+                                    settlements = emptyList()
+                                }
+                            },
+                            onCreate = { draft ->
+                                val tripMembers = members.filter { it.id in draft.memberIds }.ifEmpty { members.take(1) }
+                                if (!config.useRemoteApi) {
+                                    val localTrip = Trip(
+                                        id = "trip-${draft.title.hashCode()}",
+                                        name = draft.title,
+                                        source = draft.source,
+                                        destination = draft.destination,
+                                        dates = draft.rideDate.ifBlank { "Planned" },
+                                        status = TripStatus.PLANNING,
+                                        members = tripMembers
+                                    )
+                                    activeTrip = localTrip
+                                    trips = trips + localTrip
+                                    members = tripMembers
+                                    expenses = emptyList()
+                                    settlements = emptyList()
+                                    draft.vehicleDetails?.let { details ->
+                                        vehicle = vehicle.copy(
+                                            registrationNumber = details.substringBefore("·").trim(),
+                                            name = details.substringAfter("·", vehicle.name).trim(),
+                                            isOnline = true
+                                        )
+                                    }
+                                    activeTripCover = draft.coverImage
+                                    draft.coverImage?.let { tripCovers = tripCovers + (localTrip.id to it) }
+                                    selectedTab = AppTab.Home
+                                    apiMessage = if (draft.reminderEnabled && draft.reportTime.isNotBlank()) {
+                                        "Trip created. Reminder set for ${draft.rideDate.substringBefore(" - ")} at ${draft.reportTime}."
+                                    } else "Trip created. Displayed on Home screen."
+                                } else scope.launch {
+                                    val request = CreateTripRequest(
+                                        tripName = draft.title,
+                                        source = draft.source,
+                                        destination = draft.destination,
+                                        createdBy = "local-user",
+                                        members = draft.memberIds.toList()
+                                    )
+                                    repository.createTrip(request)
+                                        .onSuccess { trip ->
+                                            activeTrip = trip
+                                            trips = trips + trip
+                                            members = trip.members
+                                            activeTripCover = draft.coverImage
+                                            draft.coverImage?.let { tripCovers = tripCovers + (trip.id to it) }
+                                            selectedTab = AppTab.Home
+                                            apiMessage = "Trip created and connected to live updates."
+                                        }
+                                        .onFailure { apiMessage = "Could not create trip: ${it.message ?: "unknown error"}" }
+                                }
+                            }
+                        )
+                    }
+
+                    AppTab.Chat -> {
+                        LocalChatScreen(
+                            members = members,
+                            tripName = activeTrip.name,
+                            tripId = activeTrip.id,
+                            repository = if (config.useRemoteApi) repository else null
+                        )
+                    }
+
+                    AppTab.Track -> {
+
+                        TrackingScreen(
+                            members = members,
+                            vehicle = vehicle,
+                            liveLocationCount = liveLocationCount,
+                            apiMessage = apiMessage,
+                            initialMode = trackingMode,
+                            onSaveVehicle = { vehicle = it }
+                        )
+                    }
+
+                    AppTab.Expenses -> {
+
+                        ExpensesScreen(
+                            tripName = activeTrip.name,
+                            members = members,
+                            expenses = expenses,
+                            settlements = settlements,
+                            onAdd = { expense ->
+                                val tripId = activeTrip.id
+                                if (!config.useRemoteApi) {
+                                    expenses = expenses + expense
+                                    apiMessage = "Expense added locally."
+                                } else {
+                                    scope.launch {
+                                        repository.addExpense(
+                                            AddExpenseRequest(
+                                                tripId = tripId,
+                                                amount = expense.amount,
+                                                paidBy = expense.paidBy,
+                                                members = expense.splitWith.toList()
+                                            )
+                                        ).onSuccess { saved ->
+                                            expenses = expenses + saved.copy(title = expense.title)
+                                            repository.settlements(tripId).onSuccess { settlements = it }
+                                            apiMessage = "Expense saved to the trip."
+                                        }.onFailure {
+                                            apiMessage = "Could not save expense: ${it.message ?: "unknown error"}"
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    }
+
+                    AppTab.More -> {
+                        ProfileScreen(
+                            phone = userPhone,
+                            tripCount = 1,
+                            onOpenVehicle = { overlay = Overlay.Telemetry },
+                            onOpenSettlement = { overlay = Overlay.Settlement },
+                            darkMode = darkMode,
+                            onToggleDarkMode = { darkMode = !darkMode },
+                            onLogout = onLogout,
+                            onClose = { selectedTab = AppTab.Home }
+                        )
+                    }
+                }
+            }
+        }
+
+        overlay?.let { current ->
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { overlay = null },
+                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = Background) {
+                    when (current) {
+                        Overlay.Profile -> ProfileScreen(
+                            phone = userPhone,
+                            tripCount = if (activeTrip != null) 1 else 0,
+                            onOpenVehicle = { overlay = Overlay.Telemetry },
+                            onOpenSettlement = { overlay = Overlay.Settlement },
+                            darkMode = darkMode,
+                            onToggleDarkMode = { darkMode = !darkMode },
+                            onLogout = { overlay = null; onLogout() },
+                            onClose = { overlay = null }
+                        )
+                        Overlay.Settlement -> SettlementScreen(
+                            tripName = activeTrip?.name ?: "Your trip",
+                            members = members,
+                            expenses = expenses,
+                            apiSettlements = settlements,
+                            onClose = { overlay = null }
+                        )
+                        Overlay.Telemetry -> TelemetryScreen(vehicle, onClose = { overlay = null })
+                    }
+                }
+            }
+        }
+
+        if (showSosDialog) {
+            SosConfirmationDialog(
+                contacts = emergencyContacts,
+                onDismiss = { showSosDialog = false },
+                onManageContacts = {
+                    showSosDialog = false
+                    showEmergencyContacts = true
+                },
+                onConfirm = {
+                    sosSent = true
+                    showSosDialog = false
+                }
+            )
+        }
+
+        if (showEmergencyContacts) {
+            EmergencyContactsDialog(
+                contacts = emergencyContacts,
+                onDismiss = { showEmergencyContacts = false },
+                onSave = {
+                    emergencyContacts = it
+                    showEmergencyContacts = false
+                }
+            )
+        }
+        }
+    }
+}
+
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+
+private enum class AppTab(
+    val label: String
+) {
+    Home(
+        label = "Home"
+    ),
+    Trips(
+        label = "Trips"
+    ),
+    Track(
+        label = "Track"
+    ),
+    Expenses(
+        label = "Split"
+    ),
+    More(
+        label = "Profile"
+    ),
+    Chat(
+        label = "Chat"
+    )
+}
+
+
+// ============================================================
+// HEADER
+// ============================================================
+
+@Composable
+private fun Header(
+    sosSent: Boolean,
+    onSos: () -> Unit
+) {
+    val darkMode = LocalTravelBuddyDarkMode.current
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding(),
+        color = if (darkMode) Color(0xFF151C26) else Color.White,
+        shadowElevation = 1.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier.size(42.dp),
+                shape = RoundedCornerShape(50),
+                color = Color(0xFFBC4E23)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("PR", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Travel Buddy",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
+                    color = if (darkMode) Color.White else Navy,
+                    maxLines = 1
+                )
+                Text(
+                    text = "Good Morning, Prashant! 👋",
+                    color = Color(0xFF64748B),
+                    fontSize = 13.sp,
+                    maxLines = 1
+                )
+            }
+            IconButton(
+                onClick = onSos,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Notifications,
+                    contentDescription = "Alerts & SOS",
+                    tint = if (sosSent) Green else (if (darkMode) Color.White else Navy),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+    }
+}
+
+
+// ============================================================
+// HOME
+// ============================================================
+
+@Composable
+private fun HomeScreen(
+    members: List<TripMember>,
+    tripName: String,
+    tripDates: String = "12 Sep - 14 Sep 2026",
+    coverImage: String?,
+    apiMessage: String,
+    navigate: (AppTab) -> Unit,
+    openFriendsAndFamily: () -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 12.dp,
+            end = 12.dp,
+            top = 10.dp,
+            bottom = 20.dp
+        ),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth().height(180.dp).clickable { navigate(AppTab.Track) },
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(containerColor = if (coverImage.isNullOrBlank()) Color(0xFF324638) else Color(0xFF3E617D))
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    if (!coverImage.isNullOrBlank()) {
+                        PlatformTripCoverImage(
+                            uri = coverImage,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    Column(modifier = Modifier.align(Alignment.BottomStart).padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(tripName, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(6.dp))
+                            Text("🚗", fontSize = 18.sp)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text("$tripDates • ${members.size} Members", color = Color.White.copy(alpha = 0.95f), fontSize = 13.sp)
+                    }
+                    Surface(
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).size(40.dp),
+                        shape = RoundedCornerShape(50),
+                        color = Color.White
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Open Trip",
+                                tint = Navy,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                HomeActionCard(
+                    icon = Icons.Default.Add,
+                    title = "Create Trip",
+                    subtitle = "Plan a new trip",
+                    accent = Blue,
+                    modifier = Modifier.weight(1f)
+                ) { navigate(AppTab.Trips) }
+                HomeActionCard(
+                    icon = Icons.Default.LocationOn,
+                    title = "Live Tracking",
+                    subtitle = "Track members",
+                    accent = Blue,
+                    modifier = Modifier.weight(1f)
+                ) { navigate(AppTab.Track) }
+            }
+        }
+        item {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                HomeActionCard(
+                    icon = Icons.Default.AccountBalanceWallet,
+                    title = "Add Expense",
+                    subtitle = "Split expenses",
+                    accent = Color(0xFFFF741F),
+                    modifier = Modifier.weight(1f)
+                ) { navigate(AppTab.Expenses) }
+                HomeActionCard(
+                    icon = Icons.Default.ChatBubble,
+                    title = "Group Chat",
+                    subtitle = "Chat with members",
+                    accent = Green,
+                    modifier = Modifier.weight(1f)
+                ) { navigate(AppTab.Chat) }
+            }
+        }
+        item {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                HomeActionCard(
+                    icon = Icons.Default.History,
+                    title = "My Trips",
+                    subtitle = "View trip history",
+                    accent = Blue,
+                    modifier = Modifier.weight(1f)
+                ) { navigate(AppTab.Trips) }
+                HomeActionCard(
+                    icon = Icons.Default.DirectionsCar,
+                    title = "Vehicle Tracker",
+                    subtitle = "Track your vehicle",
+                    accent = Color(0xFF315A9C),
+                    modifier = Modifier.weight(1f)
+                ) { navigate(AppTab.Track) }
+            }
+        }
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color(0xFFE8F1FC))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Ongoing Trip", fontWeight = FontWeight.Bold, color = tbTextColor(), fontSize = 17.sp)
+                    Spacer(Modifier.height(12.dp))
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (LocalTravelBuddyDarkMode.current) Color(0xFF151C26) else Color.White,
+                        modifier = Modifier.fillMaxWidth().clickable { navigate(AppTab.Track) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Sensors,
+                                contentDescription = "Live Signal",
+                                tint = Green,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(tripName, fontWeight = FontWeight.SemiBold, color = tbTextColor(), fontSize = 15.sp)
+                                Text(apiMessage, fontSize = 13.sp, color = tbSubtextColor())
+                            }
+                            Surface(shape = RoundedCornerShape(50), color = Green) {
+                                Text(
+                                    "Live",
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp),
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeActionCard(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = modifier.height(68.dp).clickable { onClick() },
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = tbCardBg()),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier.size(42.dp),
+                shape = RoundedCornerShape(50),
+                color = accent
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = title,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text(title, color = tbTextColor(), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
+                Text(subtitle, color = tbSubtextColor(), fontSize = 11.sp, maxLines = 1)
+            }
+        }
+    }
+}
+
+
+// ============================================================
+// LIVE TRIP CARD
+// ============================================================
+
+@Composable
+private fun LiveTripCard(
+    tripName: String,
+    tripRoute: String,
+    memberCount: Int,
+    onMap: () -> Unit
+) {
+
+    Card(
+
+        colors = CardDefaults.cardColors(
+            containerColor = Navy
+        ),
+
+        shape = RoundedCornerShape(20.dp),
+
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                onMap()
+            }
+    ) {
+
+        Column(
+            modifier = Modifier.padding(20.dp)
+        ) {
+
+            Text(
+                text = "LIVE NOW",
+                color = Color(0xFF8DE9B0),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(
+                modifier = Modifier.height(7.dp)
+            )
+
+            Text(
+                text = tripName,
+                color = Color.White,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+
+            Spacer(
+                modifier = Modifier.height(3.dp)
+            )
+
+            Text(
+                text = tripRoute,
+                color = Color(0xFFD4DFED),
+                fontSize = 14.sp,
+                maxLines = 1
+            )
+
+            Spacer(
+                modifier = Modifier.height(20.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+
+                Metric(
+                    value = memberCount.toString(),
+                    label = "members"
+                )
+
+                Spacer(
+                    modifier = Modifier.width(32.dp)
+                )
+
+                Metric(
+                    value = "168 km",
+                    label = "to go"
+                )
+
+                Spacer(
+                    modifier = Modifier.width(32.dp)
+                )
+
+                Metric(
+                    value = "2h 48m",
+                    label = "ETA"
+                )
+            }
+        }
+    }
+}
+
+
+// ============================================================
+// METRIC
+// ============================================================
+
+@Composable
+private fun Metric(
+    value: String,
+    label: String
+) {
+
+    Column {
+
+        Text(
+            text = value,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp
+        )
+
+        Text(
+            text = label,
+            color = Color(0xFFBAC8D9),
+            fontSize = 12.sp
+        )
+    }
+}
+
+
+// ============================================================
+// SECTION TITLE
+// ============================================================
+
+@Composable
+private fun SectionTitle(
+    title: String,
+    action: String,
+    click: () -> Unit
+) {
+
+    Row(
+
+        modifier = Modifier.fillMaxWidth(),
+
+        verticalAlignment =
+            Alignment.CenterVertically
+    ) {
+
+        Text(
+            text = title,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp,
+            color = Navy,
+            modifier = Modifier.weight(1f)
+        )
+
+        Text(
+            text = action,
+            color = Blue,
+            fontSize = 15.sp,
+            modifier = Modifier.clickable {
+                click()
+            }
+        )
+    }
+}
+
+
+// ============================================================
+// MEMBER CHIP
+// ============================================================
+
+@Composable
+private fun MemberChip(
+    member: TripMember
+) {
+
+    Card(
+
+        colors = CardDefaults.cardColors(
+            containerColor = Soft
+        ),
+
+        shape = RoundedCornerShape(14.dp)
+    ) {
+
+        Row(
+
+            modifier = Modifier.padding(
+                horizontal = 12.dp,
+                vertical = 10.dp
+            ),
+
+            verticalAlignment =
+                Alignment.CenterVertically
+        ) {
+
+            Box(
+
+                modifier = Modifier
+                    .size(10.dp)
+                    .background(
+                        color = Color(member.color),
+                        shape = RoundedCornerShape(50)
+                    )
+            )
+
+            Spacer(
+                modifier = Modifier.width(7.dp)
+            )
+
+            Text(
+                text = member.name,
+                fontSize = 14.sp,
+                color = Navy,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+
+// ============================================================
+// COMPACT VEHICLE CARD
+// ============================================================
+
+@Composable
+private fun CompactVehicleCard(
+    vehicle: Vehicle,
+    onClick: () -> Unit
+) {
+
+    Card(
+
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                onClick()
+            },
+
+        shape = RoundedCornerShape(18.dp),
+
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White
+        )
+    ) {
+
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+
+            Row(
+                verticalAlignment =
+                    Alignment.CenterVertically
+            ) {
+
+                Icon(
+                    imageVector = Icons.Default.DirectionsCar,
+                    contentDescription = "Vehicle",
+                    tint = Blue,
+                    modifier = Modifier.size(32.dp)
+                )
+
+                Spacer(
+                    modifier = Modifier.width(10.dp)
+                )
+
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+
+                    Text(
+                        text = vehicle.name,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        color = Navy
+                    )
+
+                    Text(
+                        text = vehicle.registrationNumber,
+                        fontSize = 13.sp,
+                        color = Color.Gray
+                    )
+                }
+
+                VehicleStatusBadge(
+                    online = vehicle.isOnline
+                )
+            }
+
+            Spacer(
+                modifier = Modifier.height(14.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement =
+                    Arrangement.SpaceBetween
+            ) {
+
+                SmallVehicleMetric(
+                    value = "${vehicle.speedKmh.toInt()} km/h",
+                    label = "Speed"
+                )
+
+                SmallVehicleMetric(
+                    value =
+                        if (vehicle.ignitionOn) {
+                            "ON"
+                        } else {
+                            "OFF"
+                        },
+                    label = "Ignition"
+                )
+
+                SmallVehicleMetric(
+                    value = "${vehicle.batteryPercent}%",
+                    label = "Tracker"
+                )
+            }
+        }
+    }
+}
+
+
+// ============================================================
+// INFO CARD
+// ============================================================
+
+@Composable
+private fun InfoCard(
+    title: String,
+    body: String,
+    accent: Color
+) {
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = tbCardBg()),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+
+        Row(
+            modifier = Modifier.padding(16.dp)
+        ) {
+
+            Box(
+
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(44.dp)
+                    .background(
+                        color = accent,
+                        shape = RoundedCornerShape(4.dp)
+                    )
+            )
+
+            Spacer(
+                modifier = Modifier.width(12.dp)
+            )
+
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+
+                Text(
+                    text = title,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tbTextColor()
+                )
+
+                Spacer(
+                    modifier = Modifier.height(3.dp)
+                )
+
+                Text(
+                    text = body,
+                    color = tbSubtextColor(),
+                    fontSize = 13.sp
+                )
+            }
+        }
+    }
+}
+
+
+// ============================================================
+// TRIPS
+// ============================================================
+
+
+@Composable
+private fun TripsScreen(
+    activeTrip: Trip?,
+    trips: List<Trip>,
+    availableMembers: List<TripMember>,
+    pendingCoverImageUri: String?,
+    onPickTripCoverImage: (() -> Unit)?,
+    onSelect: (Trip) -> Unit,
+    onDelete: (Trip) -> Unit,
+    onCreate: (CreateTripData) -> Unit
+) {
+    var showCreateTrip by remember { mutableStateOf(false) }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Your trips",
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Navy,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(onClick = { showCreateTrip = true }) {
+                    Text("+ Create")
+                }
+            }
+        }
+
+        if (trips.isEmpty()) {
+            item { InfoCard("No active trip", "Create a trip to load its live API snapshot.", Orange) }
+        } else {
+            items(trips) { trip ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable { onSelect(trip) },
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = tbCardBg())
+                ) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(trip.name, fontWeight = FontWeight.Bold, color = tbTextColor(), fontSize = 17.sp)
+                            Text("${trip.source} → ${trip.destination}", color = tbSubtextColor(), fontSize = 13.sp)
+                            Text("${trip.dates} · ${trip.members.size} members", color = tbSubtextColor(), fontSize = 12.sp)
+                        }
+                        Surface(shape = RoundedCornerShape(50), color = if (trip.id == activeTrip?.id) Green else Soft) {
+                            Text(if (trip.id == activeTrip?.id) "Selected" else trip.status.name.lowercase(), modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), color = if (trip.id == activeTrip?.id) Color.White else Blue, fontSize = 11.sp)
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text("×", modifier = Modifier.clickable { onDelete(trip) }.padding(8.dp), color = Red, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCreateTrip) {
+        CreateTripDialog(
+            availableMembers = availableMembers,
+            pendingCoverImageUri = pendingCoverImageUri,
+            onPickTripCoverImage = onPickTripCoverImage,
+            onDismiss = { showCreateTrip = false },
+            onCreated = {
+                onCreate(it)
+                showCreateTrip = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun CreateTripDialog(
+    availableMembers: List<TripMember>,
+    pendingCoverImageUri: String?,
+    onPickTripCoverImage: (() -> Unit)?,
+    onDismiss: () -> Unit,
+    onCreated: (CreateTripData) -> Unit
+) {
+    var source by remember { mutableStateOf("Bengaluru, Karnataka") }
+    var destination by remember { mutableStateOf("Coorg, Karnataka") }
+    var title by remember { mutableStateOf("Coorg Ride") }
+    var startDate by remember { mutableStateOf("18/10/2026") }
+    var endDate by remember { mutableStateOf("20/10/2026") }
+    var flagOffTime by remember { mutableStateOf("") }
+    var reportTime by remember { mutableStateOf("") }
+    var multiDay by remember { mutableStateOf(false) }
+    var rideType by remember { mutableStateOf(RideType.OPEN_TO_ALL) }
+    var notes by remember { mutableStateOf("") }
+    var selectedMemberIds by remember { mutableStateOf(availableMembers.map { it.id }.toSet()) }
+    var vehicleDetails by remember { mutableStateOf("KA01AB1234 · Sedan") }
+    var coverImage by remember { mutableStateOf(pendingCoverImageUri.orEmpty()) }
+    var picker by remember { mutableStateOf<String?>(null) }
+    var reminderEnabled by remember { mutableStateOf(true) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Create Trip") },
+        text = {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.height(460.dp)
+            ) {
+                item {
+                    OutlinedTextField(
+                        value = destination,
+                        onValueChange = { destination = it },
+                        label = { Text("Destination") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+                item {
+                    OutlinedTextField(
+                        value = source,
+                        onValueChange = { source = it },
+                        label = { Text("Starting location") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+                item {
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        label = { Text("Trip name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PickerField("Start date", startDate, Modifier.weight(1f)) { picker = "start" }
+                        PickerField("End date", endDate, Modifier.weight(1f)) { picker = "end" }
+                    }
+                }
+                item {
+                    Text("Trip Members (${selectedMemberIds.size})", fontWeight = FontWeight.Bold)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        availableMembers.forEach { member ->
+                            val selected = member.id in selectedMemberIds
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    selectedMemberIds = if (selected) selectedMemberIds - member.id else selectedMemberIds + member.id
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (selected) Soft else Color.White
+                            ) {
+                                Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(if (selected) "✓" else "+", color = if (selected) Green else Color.Gray, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(member.name, modifier = Modifier.weight(1f), color = Navy)
+                                    Text(if (selected) "Added" else "Add", color = if (selected) Green else Blue, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+                item {
+                    OutlinedTextField(
+                        value = vehicleDetails,
+                        onValueChange = { vehicleDetails = it },
+                        label = { Text("Vehicle (optional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+                item {
+                    LaunchedEffect(pendingCoverImageUri) {
+                        if (!pendingCoverImageUri.isNullOrBlank()) coverImage = pendingCoverImageUri
+                    }
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { onPickTripCoverImage?.invoke() },
+                        shape = RoundedCornerShape(14.dp), color = Soft
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(if (coverImage.isBlank()) "Add trip cover photo" else "✓ Cover photo selected", fontWeight = FontWeight.SemiBold, color = Navy)
+                            Text(if (onPickTripCoverImage == null) "Select preset below or upload on Android." else "Choose an image or tap a preset below", fontSize = 12.sp, color = Color.Gray)
+                            if (coverImage.isNotBlank()) PlatformTripCoverImage(coverImage, Modifier.fillMaxWidth().height(120.dp).padding(top = 10.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text("Or select scenic cover preset:", fontSize = 11.sp, color = Color.Gray)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            "🏔️ Mountain" to "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=800&q=80",
+                            "🏖️ Beach" to "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&q=80",
+                            "🌲 Forest" to "https://images.unsplash.com/photo-1448375240586-882707db888b?w=800&q=80",
+                            "🛣️ Highway" to "https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?w=800&q=80"
+                        ).forEach { (label, url) ->
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (coverImage == url) Blue else Color(0xFFF1F5F9),
+                                modifier = Modifier.weight(1f).clickable { coverImage = url }
+                            ) {
+                                Text(
+                                    label,
+                                    color = if (coverImage == url) Color.White else Navy,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                }
+                item {
+                    PickerField("Flag-off time", flagOffTime.ifBlank { "Select time" }, Modifier.fillMaxWidth()) { picker = "flag" }
+                }
+                item {
+                    PickerField("Report time", reportTime.ifBlank { "Select time" }, Modifier.fillMaxWidth()) { picker = "report" }
+                }
+                item {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) { Text("Trip reminder", fontWeight = FontWeight.SemiBold); Text("Alert at the report time", fontSize = 12.sp, color = Color.Gray) }
+                        androidx.compose.material3.Switch(reminderEnabled, { reminderEnabled = it })
+                    }
+                }
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Multi Day Trip", modifier = Modifier.weight(1f))
+                        androidx.compose.material3.Switch(
+                            checked = multiDay,
+                            onCheckedChange = { multiDay = it }
+                        )
+                    }
+                }
+                item { Text("Ride Type", fontWeight = FontWeight.Bold) }
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        RideTypeButton("Open To All", rideType == RideType.OPEN_TO_ALL) {
+                            rideType = RideType.OPEN_TO_ALL
+                        }
+                        RideTypeButton("Request To Join", rideType == RideType.REQUEST_TO_JOIN) {
+                            rideType = RideType.REQUEST_TO_JOIN
+                        }
+                        RideTypeButton("Invite Only", rideType == RideType.INVITE_ONLY) {
+                            rideType = RideType.INVITE_ONLY
+                        }
+                    }
+                }
+                item {
+                    OutlinedTextField(
+                        value = notes,
+                        onValueChange = { if (it.length <= 10000) notes = it },
+                        label = { Text("Ride Notes") },
+                        modifier = Modifier.fillMaxWidth().height(120.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (destination.isBlank() || title.isBlank()) return@Button
+                    onCreated(
+                        CreateTripData(
+                            source = source,
+                            destination = destination,
+                            title = title,
+                            rideDate = "$startDate - $endDate",
+                            flagOffTime = flagOffTime,
+                            reportTime = reportTime,
+                            multiDay = multiDay,
+                            rideType = rideType,
+                            notes = notes,
+                            memberIds = selectedMemberIds,
+                            vehicleDetails = vehicleDetails.takeIf { it.isNotBlank() },
+                            coverImage = coverImage.takeIf { it.isNotBlank() },
+                            reminderEnabled = reminderEnabled
+                        )
+                    )
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Red)
+            ) {
+                Text("Next")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Back") }
+        }
+    )
+    when (picker) {
+        "start" -> CalendarPickerDialog(startDate, { startDate = it; picker = null }, { picker = null })
+        "end" -> CalendarPickerDialog(endDate, { endDate = it; picker = null }, { picker = null })
+        "flag" -> TimePickerDialog(flagOffTime, { flagOffTime = it; picker = null }, { picker = null })
+        "report" -> TimePickerDialog(reportTime, { reportTime = it; picker = null }, { picker = null })
+    }
+}
+
+@Composable
+private fun PickerField(label: String, value: String, modifier: Modifier, onClick: () -> Unit) {
+    Surface(modifier = modifier.clickable(onClick = onClick), shape = RoundedCornerShape(10.dp), color = tbCardBg(), border = androidx.compose.foundation.BorderStroke(1.dp, tbCardBorder())) {
+        Column(Modifier.padding(12.dp)) { Text(label, fontSize = 11.sp, color = tbSubtextColor()); Text(value, color = tbTextColor(), fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+    }
+}
+
+@Composable
+private fun CalendarPickerDialog(initial: String, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
+    var month by remember { mutableStateOf(initial.split("/").getOrNull(1)?.toIntOrNull() ?: 10) }
+    var year by remember { mutableStateOf(initial.split("/").getOrNull(2)?.toIntOrNull() ?: 2026) }
+    val currentYear = 2026
+    val currentMonth = 10
+    val currentDay = 18
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select date (from today onwards)", color = tbTextColor(), fontSize = 17.sp, fontWeight = FontWeight.Bold) },
+        containerColor = tbCardBg(),
+        text = {
+            Column {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    val canGoPrev = (year > currentYear) || (year == currentYear && month > currentMonth)
+                    Text(
+                        "‹",
+                        Modifier
+                            .then(if (canGoPrev) Modifier.clickable { if (month == 1) { month = 12; year-- } else month-- } else Modifier)
+                            .padding(10.dp),
+                        color = if (canGoPrev) tbTextColor() else Color.Gray.copy(alpha = 0.35f),
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "$month / $year",
+                        Modifier.weight(1f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        fontWeight = FontWeight.Bold,
+                        color = tbTextColor()
+                    )
+                    Text(
+                        "›",
+                        Modifier.clickable { if (month == 12) { month = 1; year++ } else month++ }.padding(10.dp),
+                        color = tbTextColor(),
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth()) {
+                    listOf("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su").forEach { dayLabel ->
+                        Text(dayLabel, Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontSize = 12.sp, color = tbSubtextColor(), fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                (1..31).chunked(7).forEach { week ->
+                    Row(Modifier.fillMaxWidth()) {
+                        week.forEach { day ->
+                            val isPast = (year < currentYear) || (year == currentYear && month < currentMonth) || (year == currentYear && month == currentMonth && day < currentDay)
+                            val isToday = (year == currentYear && month == currentMonth && day == currentDay)
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(vertical = 3.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Surface(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .then(
+                                            if (!isPast) {
+                                                Modifier.clickable {
+                                                    onSelect(day.toString().padStart(2, '0') + "/" + month.toString().padStart(2, '0') + "/" + year)
+                                                }
+                                            } else Modifier
+                                        ),
+                                    shape = RoundedCornerShape(50),
+                                    color = if (isToday) Blue else Color.Transparent
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = day.toString(),
+                                            color = when {
+                                                isToday -> Color.White
+                                                isPast -> if (LocalTravelBuddyDarkMode.current) Color(0xFF475569) else Color(0xFFCBD5E1)
+                                                else -> tbTextColor()
+                                            },
+                                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun TimePickerDialog(initial: String, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
+    var hour by remember { mutableStateOf(initial.substringBefore(":").toIntOrNull() ?: 8) }
+    var minute by remember { mutableStateOf(initial.substringAfter(":", "00").take(2).toIntOrNull() ?: 0) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Select time") }, text = {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = Blue)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Button({ hour = (hour + 23) % 24 }) { Text("Hour −") }; Button({ hour = (hour + 1) % 24 }) { Text("Hour +") } }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Button({ minute = (minute + 55) % 60 }) { Text("Min −") }; Button({ minute = (minute + 5) % 60 }) { Text("Min +") } }
+        }
+    }, confirmButton = { Button(onClick = { onSelect("${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}") }) { Text("Set time") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+@Composable
+private fun RideTypeButton(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        color = if (selected) Red else Color.Black,
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Box(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(text, color = Color.White)
+        }
+    }
+}
+
+// ============================================================
+// LIVE TRACKING HUB: 1. LIVE USERS  2. VEHICLE GPS  3. CHILD BAG TAGS
+// ============================================================
+
+@Composable
+private fun TrackingScreen(
+    members: List<TripMember>,
+    vehicle: Vehicle,
+    liveLocationCount: Int,
+    apiMessage: String,
+    initialMode: Int,
+    onSaveVehicle: (Vehicle) -> Unit
+) {
+    var selectedMode by remember(initialMode) { mutableStateOf(initialMode.coerceIn(0, 2)) }
+    var showVehicleEditor by remember { mutableStateOf(false) }
+    var showAddTagDialog by remember { mutableStateOf(false) }
+
+    // State for live tracked buddies
+    var trackingCode by remember { mutableStateOf("TRIP-7489") }
+    var joinCodeInput by remember { mutableStateOf("") }
+    var codeStatusMessage by remember { mutableStateOf<String?>(null) }
+    var activeBuddies by remember {
+        mutableStateOf(
+            if (members.isNotEmpty()) members else listOf(
+                TripMember("usr-1", "Prashant (You)", 0xFF2F80EDL, true),
+                TripMember("usr-2", "Aarav", 0xFF27AE60L, true),
+                TripMember("usr-3", "Rhea", 0xFFF2994AL, true),
+                TripMember("usr-4", "Kabir", 0xFF9B51E0L, true)
+            )
+        )
+    }
+
+    // State for child school bag / personal tag device
+    var childBagDevice by remember {
+        mutableStateOf(
+            MapTarget(
+                id = "dev-child-1",
+                title = "Aarav's School Bag Tag",
+                subtitle = "Bound to: Aarav (Class 5)",
+                latitude = 12.9740,
+                longitude = 77.6020,
+                speedKmh = 0.0,
+                batteryPercent = 88,
+                color = 0xFF22C55EL,
+                type = "CHILD_BAG",
+                safeZoneName = "St. Joseph's Academy",
+                safeZoneRadiusMeters = 300.0,
+                isInsideSafeZone = true
+            )
+        )
+    }
+    var engineLocked by remember { mutableStateOf(false) }
+    var tagAlertTriggered by remember { mutableStateOf(false) }
+
+    Column(Modifier.fillMaxSize()) {
+        // Top 3-Way Sub-Tabs
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf("Live Users", "Vehicle GPS", "Tag Tracking").forEachIndexed { index, label ->
+                Surface(
+                    modifier = Modifier.weight(1f).clickable { selectedMode = index },
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (selectedMode == index) Blue else if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White,
+                    shadowElevation = if (selectedMode == index) 3.dp else 1.dp
+                ) {
+                    Text(
+                        label,
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        color = if (selectedMode == index) Color.White else tbTextColor(),
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        }
+
+        when (selectedMode) {
+            0 -> {
+                // FEATURE 1: LIVE USERS TRACKING (TRIP & FAMILY/FRIENDS WITH CODE)
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    item {
+                        LiveGoogleMapView(
+                            members = activeBuddies,
+                            vehicle = vehicle,
+                            childBagDevice = childBagDevice,
+                            modifier = Modifier.fillMaxWidth().height(290.dp)
+                        )
+                    }
+
+                    // Share & Join Tracking Code Card
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Soft
+                            )
+                        ) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text("Your Live Tracking Code", color = tbSubtextColor(), fontSize = 12.sp)
+                                        Text(trackingCode, color = tbTextColor(), fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = Blue.copy(alpha = 0.15f),
+                                        modifier = Modifier.clickable {
+                                            codeStatusMessage = "Code $trackingCode copied! Share with friends to track live."
+                                        }
+                                    ) {
+                                        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Filled.Share, "Share", tint = Blue, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Share", color = Blue, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        }
+                                    }
+                                }
+
+                                HorizontalDivider(color = if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0))
+
+                                Text("Track Another User or Group Using Code", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = tbTextColor())
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = joinCodeInput,
+                                        onValueChange = { joinCodeInput = it.uppercase() },
+                                        placeholder = { Text("e.g. TRIP-7489 or BUDDY-8392", fontSize = 12.sp) },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true
+                                    )
+                                    Button(
+                                        onClick = {
+                                            if (joinCodeInput.isNotBlank()) {
+                                                val newBuddyName = "Buddy ${joinCodeInput.takeLast(4)}"
+                                                val colors = listOf(0xFF9B51E0L, 0xFFF2994AL, 0xFF27AE60L, 0xFFEB5757L)
+                                                activeBuddies = activeBuddies + TripMember(
+                                                    id = "user-${joinCodeInput.hashCode()}",
+                                                    name = newBuddyName,
+                                                    color = colors[activeBuddies.size % colors.size],
+                                                    isSharingLocation = true
+                                                )
+                                                codeStatusMessage = "Joined session $joinCodeInput! Now tracking $newBuddyName live on Google Map."
+                                                joinCodeInput = ""
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                                    ) {
+                                        Text("Track")
+                                    }
+                                }
+
+                                codeStatusMessage?.let { msg ->
+                                    Text(msg, color = Green, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Live Tracked Buddies (${activeBuddies.size})",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp,
+                                color = tbTextColor(),
+                                modifier = Modifier.weight(1f)
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Green.copy(alpha = 0.15f)
+                            ) {
+                                Text("● Real-time GPS", color = Green, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                            }
+                        }
+                    }
+
+                    items(activeBuddies) { buddy ->
+                        val distKm = 0.6 + (kotlin.math.abs(buddy.name.hashCode()) % 10) * 0.4
+                        val speed = 35.0 + (kotlin.math.abs(buddy.name.hashCode()) % 25)
+                        val battery = 96 - (kotlin.math.abs(buddy.name.hashCode()) % 30)
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(44.dp),
+                                    shape = CircleShape,
+                                    color = Color(buddy.color)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(buddy.name.take(2).uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    }
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(buddy.name, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = tbTextColor())
+                                    Spacer(Modifier.height(2.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("📍 ${formatDistance(distKm)} away", fontSize = 11.sp, color = Blue, fontWeight = FontWeight.SemiBold)
+                                        Text("⏱️ ${formatEta(distKm, speed)}", fontSize = 11.sp, color = Green, fontWeight = FontWeight.SemiBold)
+                                        Text("🔋 $battery%", fontSize = 11.sp, color = Color.Gray)
+                                    }
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (buddy.isSharingLocation) Green.copy(alpha = 0.12f) else Color.LightGray.copy(alpha = 0.2f)
+                                ) {
+                                    Text(
+                                        if (buddy.isSharingLocation) "${speed.toInt()} km/h" else "Paused",
+                                        color = if (buddy.isSharingLocation) Green else Color.Gray,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            1 -> {
+                // FEATURE 2: VEHICLE GPS TRACKING & HARDWARE TELEMETRY
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    item {
+                        LiveGoogleMapView(
+                            members = emptyList(),
+                            vehicle = vehicle,
+                            modifier = Modifier.fillMaxWidth().height(260.dp)
+                        )
+                    }
+
+                    item {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column {
+                                Text(vehicle.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = tbTextColor())
+                                Text("Reg: ${vehicle.registrationNumber} • IMEI: ${vehicle.imei}", fontSize = 12.sp, color = tbSubtextColor())
+                            }
+                            TextButton(onClick = { showVehicleEditor = true }) {
+                                Text("Edit Info")
+                            }
+                        }
+                    }
+
+                    // Telemetry Grid
+                    item {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            // Speedometer Card
+                            Card(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                            ) {
+                                Column(Modifier.padding(14.dp)) {
+                                    Text("Speedometer", fontSize = 11.sp, color = tbSubtextColor())
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("${vehicle.speedKmh.toInt()} km/h", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Blue)
+                                    Text("Highway Cruise", fontSize = 10.sp, color = Green)
+                                }
+                            }
+
+                            // Ignition Status Card
+                            Card(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                            ) {
+                                Column(Modifier.padding(14.dp)) {
+                                    Text("Engine Status", fontSize = 11.sp, color = tbSubtextColor())
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(if (vehicle.ignitionOn) "RUNNING" else "OFF", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (vehicle.ignitionOn) Green else Color.Gray)
+                                    Text(if (vehicle.ignitionOn) "Ignition ON" else "Parked & Locked", fontSize = 10.sp, color = tbSubtextColor())
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            // Battery Card
+                            Card(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                            ) {
+                                Column(Modifier.padding(14.dp)) {
+                                    Text("Vehicle Battery", fontSize = 11.sp, color = tbSubtextColor())
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("${vehicle.batteryPercent}%", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Green)
+                                    Text("12.6V Health Good", fontSize = 10.sp, color = Green)
+                                }
+                            }
+
+                            // Geofence Card
+                            Card(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                            ) {
+                                Column(Modifier.padding(14.dp)) {
+                                    Text("Home Geofence", fontSize = 11.sp, color = tbSubtextColor())
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("SAFE", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Green)
+                                    Text("200m Parking Radius", fontSize = 10.sp, color = tbSubtextColor())
+                                }
+                            }
+                        }
+                    }
+
+                    // Remote Engine Immobilizer Control
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (engineLocked) Color(0xFF3B151E) else if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Soft
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    if (engineLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                                    null,
+                                    tint = if (engineLocked) Red else Blue,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Remote Engine Immobilizer", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tbTextColor())
+                                    Text(
+                                        if (engineLocked) "Engine is LOCKED remotely. Vehicle cannot be started." else "Engine is unlocked and ready to ride.",
+                                        fontSize = 11.sp,
+                                        color = tbSubtextColor()
+                                    )
+                                }
+                                Switch(
+                                    checked = engineLocked,
+                                    onCheckedChange = { engineLocked = it }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            2 -> {
+                // FEATURE 3: CHILD SCHOOL BAG & PERSONAL ASSET DEVICE TRACKING
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    item {
+                        LiveGoogleMapView(
+                            members = emptyList(),
+                            childBagDevice = childBagDevice,
+                            modifier = Modifier.fillMaxWidth().height(260.dp)
+                        )
+                    }
+
+                    item {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column {
+                                Text(childBagDevice.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = tbTextColor())
+                                Text(childBagDevice.subtitle, fontSize = 12.sp, color = tbSubtextColor())
+                            }
+                            Button(
+                                onClick = { showAddTagDialog = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                            ) {
+                                Text("+ Add Tag")
+                            }
+                        }
+                    }
+
+                    // Safe Zone Status Card
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (childBagDevice.isInsideSafeZone) Color(0xFFE8F8EF) else Color(0xFFFEF2F2)
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (childBagDevice.isInsideSafeZone) Color(0xFF86EFAC) else Color(0xFFFECDD3)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(42.dp),
+                                    shape = CircleShape,
+                                    color = if (childBagDevice.isInsideSafeZone) Green else Red
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            if (childBagDevice.isInsideSafeZone) Icons.Filled.Check else Icons.Filled.NotificationsActive,
+                                            null,
+                                            tint = Color.White
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        if (childBagDevice.isInsideSafeZone) "✓ Inside School Safe Zone" else "⚠️ Outside Safe Zone Alert!",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = if (childBagDevice.isInsideSafeZone) Color(0xFF14532D) else Color(0xFF7F1D1D)
+                                    )
+                                    Text(
+                                        "Safe Zone: ${childBagDevice.safeZoneName ?: "St. Joseph's Academy"} (300m radius)",
+                                        fontSize = 12.sp,
+                                        color = if (childBagDevice.isInsideSafeZone) Color(0xFF166534) else Color(0xFF991B1B)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Device Telemetry Specs
+                    item {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Card(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                            ) {
+                                Column(Modifier.padding(14.dp)) {
+                                    Text("Tag Battery", fontSize = 11.sp, color = tbSubtextColor())
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("${childBagDevice.batteryPercent}%", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Green)
+                                    Text("~14 days standby", fontSize = 10.sp, color = tbSubtextColor())
+                                }
+                            }
+
+                            Card(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                            ) {
+                                Column(Modifier.padding(14.dp)) {
+                                    Text("GPS Fix", fontSize = 11.sp, color = tbSubtextColor())
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("LIVE", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Blue)
+                                    Text("Updated 2 mins ago", fontSize = 10.sp, color = tbSubtextColor())
+                                }
+                            }
+                        }
+                    }
+
+                    // Ring Tag Action Card
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Soft)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Filled.VolumeUp, null, tint = Blue, modifier = Modifier.size(28.dp))
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Audible Bag Tag Beacon", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tbTextColor())
+                                    Text(
+                                        if (tagAlertTriggered) "Beeping tag sound activated!" else "Play a loud beep on the device to locate bag nearby.",
+                                        fontSize = 11.sp,
+                                        color = tbSubtextColor()
+                                    )
+                                }
+                                Button(
+                                    onClick = { tagAlertTriggered = !tagAlertTriggered },
+                                    colors = ButtonDefaults.buttonColors(containerColor = if (tagAlertTriggered) Orange else Blue)
+                                ) {
+                                    Text(if (tagAlertTriggered) "Stop" else "Ring Tag")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showVehicleEditor) {
+        VehicleDetailsDialog(
+            initial = vehicle,
+            onDismiss = { showVehicleEditor = false },
+            onSave = { saved -> onSaveVehicle(saved); showVehicleEditor = false }
+        )
+    }
+
+    if (showAddTagDialog) {
+        AddTagDialog(
+            onDismiss = { showAddTagDialog = false },
+            onAdd = { newTag ->
+                childBagDevice = newTag
+                showAddTagDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun AddTagDialog(
+    onDismiss: () -> Unit,
+    onAdd: (MapTarget) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var assignedTo by remember { mutableStateOf("") }
+    var safeZone by remember { mutableStateOf("St. Joseph's Academy") }
+    var imei by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Register Tracking Device") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Pair a GPS tracker tag for child bag, pet collar, or luggage.", color = Color.Gray, fontSize = 12.sp)
+                OutlinedTextField(name, { name = it }, label = { Text("Tag name (e.g. Aarav's School Bag)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(assignedTo, { assignedTo = it }, label = { Text("Assigned to (e.g. Child Aarav)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(safeZone, { safeZone = it }, label = { Text("Safe Zone Name (e.g. School)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(imei, { imei = it }, label = { Text("Device IMEI or QR Code") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                if (name.isNotBlank()) {
+                    onAdd(
+                        MapTarget(
+                            id = "dev-${name.hashCode()}",
+                            title = name,
+                            subtitle = if (assignedTo.isNotBlank()) "Bound to: $assignedTo" else "Personal Tag",
+                            latitude = 12.9740,
+                            longitude = 77.6020,
+                            speedKmh = 0.0,
+                            batteryPercent = 100,
+                            color = 0xFF22C55EL,
+                            type = "CHILD_BAG",
+                            safeZoneName = safeZone.ifBlank { "Safe Zone" },
+                            safeZoneRadiusMeters = 300.0,
+                            isInsideSafeZone = true
+                        )
+                    )
+                }
+            }) { Text("Register Tag") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun VehicleDetailsDialog(
+    initial: Vehicle,
+    onDismiss: () -> Unit,
+    onSave: (Vehicle) -> Unit
+) {
+    var name by remember { mutableStateOf(initial.name) }
+    var registration by remember { mutableStateOf(initial.registrationNumber) }
+    var imei by remember { mutableStateOf(initial.imei) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Vehicle Details") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("These details are shown in Vehicle Tracking.", color = Color.Gray, fontSize = 13.sp)
+                OutlinedTextField(name, { name = it }, label = { Text("Vehicle name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(registration, { registration = it.uppercase() }, label = { Text("Registration number") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(imei, { imei = it }, label = { Text("GPS device / IMEI") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                if (name.isNotBlank() && registration.isNotBlank()) onSave(initial.copy(name = name, registrationNumber = registration, imei = imei, isOnline = true))
+            }) { Text("Save Vehicle") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+
+// ============================================================
+// VEHICLE STATUS BADGE
+// ============================================================
+
+@Composable
+private fun VehicleStatusBadge(
+    online: Boolean
+) {
+
+    Surface(
+
+        color =
+            if (online) {
+                Color(0xFFE8F8EF)
+            } else {
+                Color(0xFFFDECEC)
+            },
+
+        shape = RoundedCornerShape(20.dp)
+    ) {
+
+        Row(
+
+            modifier = Modifier.padding(
+                horizontal = 12.dp,
+                vertical = 7.dp
+            ),
+
+            verticalAlignment =
+                Alignment.CenterVertically
+        ) {
+
+            Box(
+
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(
+                        color =
+                            if (online) {
+                                Green
+                            } else {
+                                Red
+                            },
+                        shape = RoundedCornerShape(50)
+                    )
+            )
+
+            Spacer(
+                modifier = Modifier.width(6.dp)
+            )
+
+            Text(
+                text =
+                    if (online) {
+                        "Online"
+                    } else {
+                        "Offline"
+                    },
+
+                fontSize = 12.sp,
+
+                fontWeight = FontWeight.SemiBold,
+
+                color =
+                    if (online) {
+                        Green
+                    } else {
+                        Red
+                    }
+            )
+        }
+    }
+}
+
+
+// ============================================================
+// VEHICLE CARD
+// ============================================================
+
+@Composable
+private fun VehicleCard(
+    vehicle: Vehicle
+) {
+
+    Card(
+
+        modifier = Modifier.fillMaxWidth(),
+
+        shape = RoundedCornerShape(20.dp),
+
+        colors = CardDefaults.cardColors(
+            containerColor = Navy
+        )
+    ) {
+
+        Column(
+            modifier = Modifier.padding(20.dp)
+        ) {
+
+            Row(
+                verticalAlignment =
+                    Alignment.CenterVertically
+            ) {
+
+                Icon(
+                    imageVector = Icons.Default.DirectionsCar,
+                    contentDescription = "Vehicle",
+                    tint = Color.White,
+                    modifier = Modifier.size(36.dp)
+                )
+
+                Spacer(
+                    modifier = Modifier.width(12.dp)
+                )
+
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+
+                    Text(
+                        text = vehicle.name,
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        text = vehicle.registrationNumber,
+                        color = Color(0xFFBAC8D9),
+                        fontSize = 13.sp
+                    )
+                }
+            }
+
+            Spacer(
+                modifier = Modifier.height(20.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement =
+                    Arrangement.SpaceBetween
+            ) {
+
+                VehicleMetric(
+                    value =
+                        "${vehicle.speedKmh.toInt()} km/h",
+                    label = "Speed"
+                )
+
+                VehicleMetric(
+                    value =
+                        if (vehicle.ignitionOn) {
+                            "ON"
+                        } else {
+                            "OFF"
+                        },
+                    label = "Ignition"
+                )
+
+                VehicleMetric(
+                    value =
+                        "${vehicle.batteryPercent}%",
+                    label = "Battery"
+                )
+            }
+        }
+    }
+}
+
+
+// ============================================================
+// VEHICLE METRIC
+// ============================================================
+
+@Composable
+private fun VehicleMetric(
+    value: String,
+    label: String
+) {
+
+    Column {
+
+        Text(
+            text = value,
+            color = Color.White,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Text(
+            text = label,
+            color = Color(0xFFBAC8D9),
+            fontSize = 11.sp
+        )
+    }
+}
+
+
+// ============================================================
+// SMALL VEHICLE METRIC
+// ============================================================
+
+@Composable
+private fun SmallVehicleMetric(
+    value: String,
+    label: String
+) {
+
+    Column {
+
+        Text(
+            text = value,
+            color = Navy,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Text(
+            text = label,
+            color = Color.Gray,
+            fontSize = 11.sp
+        )
+    }
+}
+
+
+// ============================================================
+// MAP PLACEHOLDER
+// ============================================================
+
+@Composable
+private fun VehicleMapPlaceholder(
+    vehicle: Vehicle
+) {
+
+    Box(
+
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(320.dp)
+            .background(
+                color = Soft,
+                shape = RoundedCornerShape(20.dp)
+            ),
+
+        contentAlignment =
+            Alignment.Center
+    ) {
+
+        Column(
+            horizontalAlignment =
+                Alignment.CenterHorizontally
+        ) {
+
+            Icon(
+                imageVector = Icons.Default.LocationOn,
+                contentDescription = "Location",
+                tint = Blue,
+                modifier = Modifier.size(54.dp)
+            )
+
+            Spacer(
+                modifier = Modifier.height(8.dp)
+            )
+
+            Text(
+                text = "Vehicle location",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = Navy
+            )
+
+            Spacer(
+                modifier = Modifier.height(4.dp)
+            )
+
+            Text(
+                text =
+                    "${vehicle.latitude}, ${vehicle.longitude}",
+
+                fontSize = 12.sp,
+
+                color = Color.Gray
+            )
+
+            Spacer(
+                modifier = Modifier.height(8.dp)
+            )
+
+            Text(
+                text = "Live GPS location will appear here",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+        }
+    }
+}
+
+
+// ============================================================
+// COORDINATES CARD
+// ============================================================
+
+@Composable
+private fun CoordinatesCard(
+    vehicle: Vehicle
+) {
+
+    Card(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+
+            Text(
+                text = "Current vehicle position",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = Navy
+            )
+
+            Spacer(
+                modifier = Modifier.height(10.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+
+                    Text(
+                        text = "LATITUDE",
+                        fontSize = 10.sp,
+                        color = Color.Gray
+                    )
+
+                    Text(
+                        text =
+                            vehicle.latitude.toString(),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Navy
+                    )
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+
+                    Text(
+                        text = "LONGITUDE",
+                        fontSize = 10.sp,
+                        color = Color.Gray
+                    )
+
+                    Text(
+                        text =
+                            vehicle.longitude.toString(),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Navy
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+// ============================================================
+// VEHICLE INFORMATION
+// ============================================================
+
+@Composable
+private fun VehicleInformationCard(
+    vehicle: Vehicle
+) {
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = tbCardBg()),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+
+            VehicleInfoRow(
+                title = "Vehicle",
+                value = vehicle.name
+            )
+
+            VehicleInfoRow(
+                title = "Registration",
+                value = vehicle.registrationNumber
+            )
+
+            VehicleInfoRow(
+                title = "IMEI",
+                value = vehicle.imei
+            )
+
+            VehicleInfoRow(
+                title = "Speed",
+                value = "${vehicle.speedKmh} km/h"
+            )
+
+            VehicleInfoRow(
+                title = "Heading",
+                value = "${vehicle.heading}°"
+            )
+
+            VehicleInfoRow(
+                title = "Ignition",
+                value =
+                    if (vehicle.ignitionOn) {
+                        "ON"
+                    } else {
+                        "OFF"
+                    }
+            )
+
+            VehicleInfoRow(
+                title = "Tracker battery",
+                value = "${vehicle.batteryPercent}%"
+            )
+
+            VehicleInfoRow(
+                title = "Status",
+                value =
+                    if (vehicle.isOnline) {
+                        "Online"
+                    } else {
+                        "Offline"
+                    }
+            )
+        }
+    }
+}
+
+
+// ============================================================
+// VEHICLE INFO ROW
+// ============================================================
+
+@Composable
+private fun VehicleInfoRow(
+    title: String,
+    value: String
+) {
+
+    Row(
+
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 7.dp),
+
+        verticalAlignment =
+            Alignment.CenterVertically
+    ) {
+
+        Text(
+            text = title,
+            color = tbSubtextColor(),
+            fontSize = 13.sp,
+            modifier = Modifier.weight(1f)
+        )
+
+        Text(
+            text = value,
+            color = tbTextColor(),
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 13.sp
+        )
+    }
+}
+
+
+// ============================================================
+// EXPENSES
+// ============================================================
+
+// ============================================================
+// EXPENSES & REALTIME SPLIT (1. TRIP GROUP  2. MANUAL PERSONAL GROUPS)
+// ============================================================
+
+data class PersonalSplitGroup(
+    val id: String,
+    val name: String,
+    val members: List<TripMember>,
+    val expenses: List<Expense>
+)
+
+@Composable
+private fun ExpensesScreen(
+    tripName: String,
+    members: List<TripMember>,
+    expenses: List<Expense>,
+    settlements: List<com.travelbuddy.app.domain.Settlement>,
+    onAdd: (Expense) -> Unit
+) {
+    var splitMode by remember { mutableStateOf(0) } // 0 = Trip Split Group, 1 = Manual Personal Split Groups
+    var showAddExpense by remember { mutableStateOf(false) }
+    var showCreateGroupDialog by remember { mutableStateOf(false) }
+    var settledList by remember { mutableStateOf(setOf<String>()) }
+    var settleToastMessage by remember { mutableStateOf<String?>(null) }
+
+    // Manual Personal Split Groups state
+    var manualGroups by remember {
+        mutableStateOf(
+            listOf(
+                PersonalSplitGroup(
+                    id = "grp-roommates",
+                    name = "Apartment 302 Roommates",
+                    members = listOf(
+                        TripMember("m1", "Prashant", 0xFF2F80EDL, true),
+                        TripMember("m2", "Rohan", 0xFF27AE60L, true),
+                        TripMember("m3", "Vikram", 0xFFF2994AL, true),
+                        TripMember("m4", "Sneha", 0xFF9B51E0L, true)
+                    ),
+                    expenses = listOf(
+                        Expense("e1", "Broadband 500Mbps", 1499.0, "m1", setOf("m1", "m2", "m3", "m4")),
+                        Expense("e2", "Monthly Groceries & Milk", 3200.0, "m3", setOf("m1", "m2", "m3", "m4")),
+                        Expense("e3", "Electricity & Water Bill", 1850.0, "m2", setOf("m1", "m2", "m3", "m4"))
+                    )
+                ),
+                PersonalSplitGroup(
+                    id = "grp-dinner",
+                    name = "Weekend Cafe & Dinner",
+                    members = listOf(
+                        TripMember("m1", "Prashant", 0xFF2F80EDL, true),
+                        TripMember("m5", "Ananya", 0xFFEB5757L, true),
+                        TripMember("m6", "Dev", 0xFF2D9CDBL, true)
+                    ),
+                    expenses = listOf(
+                        Expense("e4", "Brewery & Pizzas", 4350.0, "m1", setOf("m1", "m5", "m6"))
+                    )
+                )
+            )
+        )
+    }
+    var selectedManualGroupIndex by remember { mutableStateOf(0) }
+
+    val currentGroupMembers = if (splitMode == 0) members else manualGroups.getOrNull(selectedManualGroupIndex)?.members ?: members
+    val currentExpenses = if (splitMode == 0) expenses else manualGroups.getOrNull(selectedManualGroupIndex)?.expenses ?: emptyList()
+    val groupTitle = if (splitMode == 0) tripName else manualGroups.getOrNull(selectedManualGroupIndex)?.name ?: "Personal Group"
+
+    val balances = ExpenseCalculator.balances(currentGroupMembers, currentExpenses)
+    val rawSettlements = if (settlements.isEmpty() || splitMode == 1) ExpenseCalculator.settlements(balances) else settlements
+    val activeSettlements = rawSettlements.filterNot { "${it.from}-${it.to}" in settledList }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Mode Selector: Trip Group vs Manual Split Groups
+        item {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color(0xFFE2E8F0),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(modifier = Modifier.padding(4.dp)) {
+                    Surface(
+                        modifier = Modifier.weight(1f).clickable { splitMode = 0 },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (splitMode == 0) Blue else Color.Transparent
+                    ) {
+                        Text(
+                            "Trip Split Group",
+                            modifier = Modifier.padding(vertical = 10.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            color = if (splitMode == 0) Color.White else tbTextColor(),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                    Surface(
+                        modifier = Modifier.weight(1f).clickable { splitMode = 1 },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (splitMode == 1) Blue else Color.Transparent
+                    ) {
+                        Text(
+                            "Manual Personal Split",
+                            modifier = Modifier.padding(vertical = 10.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            color = if (splitMode == 1) Color.White else tbTextColor(),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        // Manual Group Switcher & Add Group Button
+        if (splitMode == 1) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Select Personal Group:", fontSize = 12.sp, color = tbSubtextColor())
+                    TextButton(onClick = { showCreateGroupDialog = true }) {
+                        Text("+ New Group", fontWeight = FontWeight.Bold)
+                    }
+                }
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(manualGroups.indices.toList()) { idx ->
+                        val grp = manualGroups[idx]
+                        val isSelected = idx == selectedManualGroupIndex
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isSelected) Blue else if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) Blue else Color(0xFFCBD5E1)),
+                            modifier = Modifier.clickable { selectedManualGroupIndex = idx }
+                        ) {
+                            Text(
+                                grp.name,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                color = if (isSelected) Color.White else tbTextColor(),
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Header + Add Button
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        if (splitMode == 0) "Trip Expense Split" else "Personal Split",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = tbTextColor()
+                    )
+                    Text(groupTitle, fontSize = 13.sp, color = tbSubtextColor())
+                }
+                Button(
+                    onClick = { showAddExpense = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                ) {
+                    Text("+ Add Bill")
+                }
+            }
+        }
+
+        // Settlement Toast feedback
+        settleToastMessage?.let { msg ->
+            item {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFE8F8EF),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF86EFAC)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Check, null, tint = Green, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(msg, color = Color(0xFF14532D), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+
+        // Total Spent Summary Card
+        item { ExpenseSummary(currentExpenses) }
+
+        // Member Balances
+        item {
+            Text("Individual Balances", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = tbTextColor())
+        }
+        balances.forEach { balance ->
+            val member = currentGroupMembers.firstOrNull { it.id == balance.memberId }
+            if (member != null) item {
+                InfoCard(
+                    title = member.name,
+                    body = if (balance.net >= 0) "Gets ₹${money(balance.net)} back" else "Owes ₹${money(-balance.net)}",
+                    accent = if (balance.net >= 0) Green else Orange
+                )
+            }
+        }
+
+        // Suggested Settlements with "Settle Up" action
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Settlement Plan", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = tbTextColor())
+                if (activeSettlements.isNotEmpty()) {
+                    Text("${activeSettlements.size} pending", fontSize = 12.sp, color = tbSubtextColor())
+                }
+            }
+        }
+        if (activeSettlements.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color(0xFFF1F5F9))
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Check, null, tint = Green)
+                        Spacer(Modifier.width(8.dp))
+                        Text("All balances are settled up!", color = tbTextColor(), fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        } else {
+            activeSettlements.forEach { settlement ->
+                val from = currentGroupMembers.firstOrNull { it.id == settlement.from }
+                val to = currentGroupMembers.firstOrNull { it.id == settlement.to }
+                if (from != null && to != null) item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("${from.name} ➔ ${to.name}", fontWeight = FontWeight.Bold, color = tbTextColor(), fontSize = 14.sp)
+                                Text("Owes ₹${money(settlement.amount)}", color = Blue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Button(
+                                onClick = {
+                                    val key = "${settlement.from}-${settlement.to}"
+                                    settledList = settledList + key
+                                    settleToastMessage = "Recorded payment: ₹${money(settlement.amount)} from ${from.name} to ${to.name} settled!"
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Green),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text("Settle Up", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // All Expenses History
+        item {
+            Text("Expenses History (${currentExpenses.size})", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = tbTextColor())
+        }
+        currentExpenses.forEach { expense ->
+            val payer = currentGroupMembers.firstOrNull { it.id == expense.paidBy }
+            item {
+                InfoCard(
+                    title = expense.title,
+                    body = if (payer == null) "₹${money(expense.amount)}" else "₹${money(expense.amount)} paid by ${payer.name} • ${expense.splitWith.size} people",
+                    accent = Blue
+                )
+            }
+        }
+    }
+
+    if (showAddExpense) {
+        AddExpenseDialog(
+            tripName = groupTitle,
+            members = currentGroupMembers,
+            onDismiss = { showAddExpense = false },
+            submit = { newExp ->
+                if (splitMode == 0) {
+                    onAdd(newExp)
+                } else {
+                    val currentGrp = manualGroups[selectedManualGroupIndex]
+                    val updatedGrp = currentGrp.copy(expenses = currentGrp.expenses + newExp)
+                    manualGroups = manualGroups.toMutableList().also { it[selectedManualGroupIndex] = updatedGrp }
+                }
+                showAddExpense = false
+            }
+        )
+    }
+
+    if (showCreateGroupDialog) {
+        CreateManualGroupDialog(
+            onDismiss = { showCreateGroupDialog = false },
+            onCreate = { newGrp ->
+                manualGroups = manualGroups + newGrp
+                selectedManualGroupIndex = manualGroups.lastIndex
+                showCreateGroupDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun CreateManualGroupDialog(
+    onDismiss: () -> Unit,
+    onCreate: (PersonalSplitGroup) -> Unit
+) {
+    var groupName by remember { mutableStateOf("") }
+    var memberNamesInput by remember { mutableStateOf("Prashant, ") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Create Personal Split Group") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Create a personal group to split bills without a trip (flatmates, dinners, friends).", fontSize = 12.sp, color = Color.Gray)
+                OutlinedTextField(
+                    value = groupName,
+                    onValueChange = { groupName = it },
+                    label = { Text("Group Name (e.g. Flat 402, Goa Trip)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = memberNamesInput,
+                    onValueChange = { memberNamesInput = it },
+                    label = { Text("Members (comma-separated)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                if (groupName.isNotBlank()) {
+                    val rawList = memberNamesInput.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                    val colors = listOf(0xFF2F80EDL, 0xFF27AE60L, 0xFFF2994AL, 0xFF9B51E0L, 0xFFEB5757L)
+                    val memberObjects = rawList.mapIndexed { idx, name ->
+                        TripMember("m-${name.hashCode()}", name, colors[idx % colors.size], true)
+                    }
+                    onCreate(
+                        PersonalSplitGroup(
+                            id = "grp-${groupName.hashCode()}",
+                            name = groupName,
+                            members = memberObjects,
+                            expenses = emptyList()
+                        )
+                    )
+                }
+            }) { Text("Create Group") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+
+// ============================================================
+// EXPENSE SUMMARY
+// ============================================================
+
+@Composable
+private fun ExpenseSummary(
+    expenses: List<Expense>
+) {
+
+    val total =
+        expenses.sumOf {
+            it.amount
+        }
+
+    Card(
+
+        colors = CardDefaults.cardColors(
+            containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Soft
+        ),
+
+        shape = RoundedCornerShape(18.dp),
+
+        modifier = Modifier.fillMaxWidth()
+    ) {
+
+        Row(
+
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+
+            horizontalArrangement =
+                Arrangement.SpaceBetween,
+
+            verticalAlignment =
+                Alignment.CenterVertically
+        ) {
+
+            Column {
+
+                Text(
+                    text = "TRIP TOTAL",
+                    fontSize = 11.sp,
+                    color = tbSubtextColor()
+                )
+
+                Text(
+                    text = "₹${money(total)}",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = tbTextColor()
+                )
+            }
+
+            Column(
+                horizontalAlignment =
+                    Alignment.End
+            ) {
+
+                Text(
+                    text = "${expenses.size} expenses",
+                    color = tbSubtextColor()
+                )
+
+                Text(
+                    text = "Split equally",
+                    color = Green,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    }
+}
+
+
+// ============================================================
+// ADD EXPENSE
+// ============================================================
+
+@Composable
+private fun AddExpenseDialog(
+    tripName: String,
+    members: List<TripMember>,
+    onDismiss: () -> Unit,
+    submit: (Expense) -> Unit
+) {
+
+    var title by remember {
+        mutableStateOf("")
+    }
+
+    var amount by remember {
+        mutableStateOf("")
+    }
+    var paidById by remember { mutableStateOf(members.firstOrNull()?.id.orEmpty()) }
+    var splitWith by remember { mutableStateOf(members.map { it.id }.toSet()) }
+
+    AlertDialog(
+
+        onDismissRequest = onDismiss,
+
+        title = { Column { Text("Add Expense"); Text(tripName, fontSize = 13.sp, color = Color.Gray) } },
+
+        text = {
+
+            Column(
+                verticalArrangement =
+                    Arrangement.spacedBy(10.dp)
+            ) {
+
+                OutlinedTextField(
+
+                    value = title,
+
+                    onValueChange = {
+                        title = it
+                    },
+
+                    label = {
+                        Text("What was it for?")
+                    },
+
+                    modifier =
+                        Modifier.fillMaxWidth(),
+
+                    singleLine = true
+                )
+                Text("Paid by", color = Navy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                members.forEach { member ->
+                    val selected = member.id == paidById
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { paidById = member.id },
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selected) Soft else Color.White
+                    ) {
+                        Text(
+                            text = if (selected) "✓ ${member.name}" else member.name,
+                            modifier = Modifier.padding(10.dp),
+                            color = Navy
+                        )
+                    }
+                }
+                Text("Split between (${splitWith.size})", color = Navy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    members.forEach { member ->
+                        val selected = member.id in splitWith
+                        Surface(
+                            modifier = Modifier.clickable {
+                                splitWith = if (selected) splitWith - member.id else splitWith + member.id
+                            },
+                            shape = RoundedCornerShape(50),
+                            color = if (selected) Color(member.color) else Color.LightGray
+                        ) {
+                            Text(member.name.take(2).uppercase(), modifier = Modifier.padding(10.dp), color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                val enteredAmount = amount.toDoubleOrNull() ?: 0.0
+                if (splitWith.isNotEmpty() && enteredAmount > 0) {
+                    Text(
+                        "Live split: ₹${money(enteredAmount / splitWith.size)} per person · ${splitWith.size} people",
+                        color = Green,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp
+                    )
+                }
+
+                OutlinedTextField(
+
+                    value = amount,
+
+                    onValueChange = { value ->
+
+                        amount =
+                            value.filter { character ->
+
+                                character.isDigit() ||
+                                        character == '.'
+                            }
+                    },
+
+                    label = {
+                        Text("Amount (₹)")
+                    },
+
+                    modifier =
+                        Modifier.fillMaxWidth(),
+
+                    singleLine = true
+                )
+            }
+        },
+
+        confirmButton = {
+
+            Button(
+
+                onClick = {
+
+                    val value =
+                        amount.toDoubleOrNull()
+
+                    if (
+                        title.isNotBlank() &&
+                        value != null &&
+                        value > 0 &&
+                        paidById.isNotBlank() && splitWith.isNotEmpty()
+                    ) {
+
+                        val expense =
+                            Expense(
+
+                                id =
+                                    "e-${members.size}-${title.hashCode()}",
+
+                                title = title,
+
+                                amount = value,
+
+                                paidBy = paidById,
+
+                                splitWith = splitWith
+                            )
+
+                        submit(expense)
+                    }
+                }
+            ) {
+
+                Text("Add")
+            }
+        },
+
+        dismissButton = {
+
+            TextButton(
+                onClick = onDismiss
+            ) {
+
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+
+// ============================================================
+// MORE
+// ============================================================
+
+@Composable
+private fun MoreScreen(
+    vehicle: Vehicle,
+    onOpenProfile: () -> Unit,
+    onOpenSettlement: () -> Unit,
+    onOpenTelemetry: () -> Unit,
+    onLogout: () -> Unit
+) {
+
+    LazyColumn(
+
+        modifier = Modifier.fillMaxSize(),
+
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 18.dp,
+            bottom = 24.dp
+        ),
+
+        verticalArrangement =
+            Arrangement.spacedBy(12.dp)
+    ) {
+
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    "Profile" to onOpenProfile,
+                    "Settlement" to onOpenSettlement,
+                    "Vehicle Tracker" to onOpenTelemetry
+                ).forEach { (label, action) ->
+                    Text(
+                        text = "$label  ›",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = tbTextColor(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(tbCardBg(), RoundedCornerShape(16.dp))
+                            .clickable(onClick = action)
+                            .padding(16.dp)
+                    )
+                }
+            }
+        }
+
+        item {
+
+            Text(
+                text = "More",
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                color = tbTextColor()
+            )
+        }
+
+
+        item {
+
+            InfoCard(
+                title = "Vehicle & GPS",
+                body =
+                    "${vehicle.name} · ${vehicle.registrationNumber}",
+                accent = Blue
+            )
+        }
+
+
+        item {
+
+            InfoCard(
+                title = "Vehicle status",
+                body =
+                    if (vehicle.isOnline) {
+                        "GPS tracker is online"
+                    } else {
+                        "GPS tracker is offline"
+                    },
+                accent =
+                    if (vehicle.isOnline) {
+                        Green
+                    } else {
+                        Red
+                    }
+            )
+        }
+
+
+        item {
+
+            InfoCard(
+                title = "Notifications",
+                body =
+                    "Trip updates, member arrivals and safety alerts.",
+                accent = Green
+            )
+        }
+
+
+        item {
+
+            InfoCard(
+                title = "Privacy & location",
+                body =
+                    "Control sharing per trip. Location is never public.",
+                accent = Blue
+            )
+        }
+
+
+        item {
+
+            InfoCard(
+                title = "Profile",
+                body = "Prashant",
+                accent = Color.Gray
+            )
+        }
+
+
+        item {
+
+            InfoCard(
+                title = "Trip team",
+                body =
+                    "Prashant · Netra · Karuna · Divakar · Karthik · Akshata · Mohan",
+                accent = Green
+            )
+        }
+
+        item {
+            Spacer(Modifier.height(4.dp))
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onLogout),
+                shape = RoundedCornerShape(16.dp),
+                color = if (LocalTravelBuddyDarkMode.current) Color(0xFF3B151E) else Color(0xFFFEF2F2),
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (LocalTravelBuddyDarkMode.current) Color(0xFF881337) else Color(0xFFFECDD3))
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Logout,
+                        contentDescription = "Logout",
+                        tint = Red,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Log Out of Travel Buddy",
+                        color = Red,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+
+// ============================================================
+// CREATE TRIP + SOS MODELS / UI
+// ============================================================
+
+private enum class RideType {
+    OPEN_TO_ALL,
+    REQUEST_TO_JOIN,
+    INVITE_ONLY
+}
+
+private data class CreateTripData(
+    val source: String,
+    val destination: String,
+    val title: String,
+    val rideDate: String,
+    val flagOffTime: String,
+    val reportTime: String,
+    val multiDay: Boolean,
+    val rideType: RideType,
+    val notes: String,
+    val memberIds: Set<String>,
+    val vehicleDetails: String?,
+    val coverImage: String?,
+    val reminderEnabled: Boolean
+)
+
+private data class EmergencyContact(
+    val id: String,
+    val name: String,
+    val relation: String,
+    val phone: String,
+    val notifyBySms: Boolean = true,
+    val notifyByCall: Boolean = true
+)
+
+private fun sampleEmergencyContacts() = emptyList<EmergencyContact>()
+
+@Composable
+private fun SosConfirmationDialog(
+    contacts: List<EmergencyContact>,
+    onDismiss: () -> Unit,
+    onManageContacts: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Emergency SOS") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("SOS will alert your configured emergency contacts with your latest available trip location.")
+                Text(
+                    if (contacts.isEmpty()) "No emergency contacts configured"
+                    else "${contacts.size} emergency contacts configured",
+                    fontWeight = FontWeight.Bold
+                )
+                contacts.forEach {
+                    Text("${it.name} • ${it.relation} • ${it.phone}", fontSize = 13.sp)
+                }
+                Text("For immediate danger, also contact your local emergency service.", color = Red, fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = Red)
+            ) { Text("SEND SOS") }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onManageContacts) { Text("Manage") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        }
+    )
+}
+
+@Composable
+private fun EmergencyContactsDialog(
+    contacts: List<EmergencyContact>,
+    onDismiss: () -> Unit,
+    onSave: (List<EmergencyContact>) -> Unit
+) {
+    var localContacts by remember(contacts) { mutableStateOf(contacts) }
+    var showAdd by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Emergency Contacts") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (localContacts.isEmpty()) {
+                    Text("No emergency contacts added yet.", color = Color.Gray)
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.height(320.dp)
+                    ) {
+                        items(localContacts) { contact ->
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(contact.name, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            "${contact.relation} • ${contact.phone}",
+                                            fontSize = 12.sp,
+                                            color = Color.Gray
+                                        )
+                                        Text(
+                                            buildString {
+                                                if (contact.notifyBySms) append("SMS ")
+                                                if (contact.notifyByCall) append("Call")
+                                            }.trim(),
+                                            fontSize = 11.sp,
+                                            color = Red
+                                        )
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            localContacts = localContacts.filterNot { it.id == contact.id }
+                                        }
+                                    ) {
+                                        Text("Remove", color = Red)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = { showAdd = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Red)
+                ) {
+                    Text("+ Add Emergency Contact")
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(localContacts) }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+
+    if (showAdd) {
+        AddEmergencyContactDialog(
+            onDismiss = { showAdd = false },
+            onAdd = {
+                localContacts = localContacts + it
+                showAdd = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun AddEmergencyContactDialog(
+    onDismiss: () -> Unit,
+    onAdd: (EmergencyContact) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var relation by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var notifyBySms by remember { mutableStateOf(true) }
+    var notifyByCall by remember { mutableStateOf(true) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Emergency Contact") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = relation,
+                    onValueChange = { relation = it },
+                    label = { Text("Relation (Parent / Friend / Rider)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = phone,
+                    onValueChange = { phone = it },
+                    label = { Text("Mobile number") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("SMS", modifier = Modifier.weight(1f))
+                    androidx.compose.material3.Switch(
+                        checked = notifyBySms,
+                        onCheckedChange = { notifyBySms = it }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Phone call", modifier = Modifier.weight(1f))
+                    androidx.compose.material3.Switch(
+                        checked = notifyByCall,
+                        onCheckedChange = { notifyByCall = it }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (name.isBlank() || relation.isBlank() || phone.isBlank()) return@Button
+                    onAdd(
+                        EmergencyContact(
+                            id = "ec-${name.hashCode()}-${phone.hashCode()}",
+                            name = name.trim(),
+                            relation = relation.trim(),
+                            phone = phone.trim(),
+                            notifyBySms = notifyBySms,
+                            notifyByCall = notifyByCall
+                        )
+                    )
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Red)
+            ) {
+                Text("Add")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+
+// ============================================================
+// SAMPLE MEMBERS
+// ============================================================
+
+private fun sampleMembers(): List<TripMember> {
+
+    return listOf(
+
+        TripMember(
+            id = "prashant",
+            name = "Prashant",
+            color = 0xFF2F80ED,
+            isSharingLocation = true
+        ),
+
+        TripMember(
+            id = "netra",
+            name = "Netra",
+            color = 0xFF27AE60,
+            isSharingLocation = true
+        ),
+
+        TripMember(
+            id = "karuna",
+            name = "Karuna",
+            color = 0xFFE67E22,
+            isSharingLocation = true
+        ),
+
+        TripMember(
+            id = "divakar",
+            name = "Divakar",
+            color = 0xFF9B59B6,
+            isSharingLocation = true
+        ),
+
+        TripMember(
+            id = "karthik",
+            name = "Karthik",
+            color = 0xFFE74C3C,
+            isSharingLocation = true
+        ),
+
+        TripMember(
+            id = "akshata",
+            name = "Akshata",
+            color = 0xFF16A085,
+            isSharingLocation = true
+        ),
+
+        TripMember(
+            id = "mohan",
+            name = "Mohan",
+            color = 0xFF8E44AD,
+            isSharingLocation = false
+        )
+    )
+}
+
+
+// ============================================================
+// SAMPLE EXPENSES
+// ============================================================
+
+private fun sampleExpenses(): List<Expense> {
+
+    val members = setOf(
+        "prashant",
+        "netra",
+        "karuna",
+        "divakar",
+        "karthik",
+        "akshata",
+        "mohan"
+    )
+
+    return listOf(
+
+        Expense(
+            id = "1",
+            title = "Homestay",
+            amount = 6800.0,
+            paidBy = "netra",
+            splitWith = members
+        ),
+
+        Expense(
+            id = "2",
+            title = "Fuel",
+            amount = 3200.0,
+            paidBy = "prashant",
+            splitWith = members
+        ),
+
+        Expense(
+            id = "3",
+            title = "Lunch",
+            amount = 1560.0,
+            paidBy = "karuna",
+            splitWith = members
+        )
+    )
+}
+
+
+// ============================================================
+// SAMPLE VEHICLE
+// ============================================================
+
+private fun sampleVehicle(): Vehicle {
+
+    return Vehicle(
+
+        id = "vehicle-001",
+
+        name = "TravelBuddy Vehicle",
+
+        registrationNumber = "KA01AB1234",
+
+        imei = "865XXXXXXXXXXXX",
+
+        isOnline = true,
+
+        latitude = 12.9716,
+
+        longitude = 77.5946,
+
+        speedKmh = 42.0,
+
+        heading = 90.0,
+
+        ignitionOn = true,
+
+        batteryPercent = 86,
+
+        lastUpdated = 0L
+    )
+}
+
+
+// ============================================================
+// MONEY
+// ============================================================
+
+private fun money(
+    amount: Double
+): String {
+
+    return amount
+        .toInt()
+        .toString()
+}
