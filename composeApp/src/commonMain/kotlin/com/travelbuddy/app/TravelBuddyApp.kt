@@ -542,7 +542,8 @@ internal fun TravelBuddyMain(
                             tripName = activeTrip.name,
                             tripId = activeTrip.id,
                             userName = currentUserName,
-                            repository = if (config.useRemoteApi) repository else null
+                            repository = if (config.useRemoteApi) repository else null,
+                            onClose = { selectedTab = AppTab.Track }
                         )
                     }
 
@@ -558,6 +559,7 @@ internal fun TravelBuddyMain(
                             initialMode = trackingMode,
                             currentUserName = currentUserName,
                             onSaveVehicle = { vehicle = it },
+                            onNavigateToChat = { selectedTab = AppTab.Chat },
                             onTripUpdated = { updatedTrip ->
                                 activeTrip = updatedTrip
                                 if (trips.none { it.id == updatedTrip.id }) {
@@ -1505,7 +1507,14 @@ private fun TripsScreen(
                                 ) {
                                     val vEmoji = when (trip.vehicleType.uppercase()) {
                                         "BIKE" -> "🏍️"
+                                        "SCOOTER" -> "🛵"
                                         "CYCLE" -> "🚲"
+                                        "SUV" -> "🚙"
+                                        "BUS" -> "🚌"
+                                        "TREK" -> "🥾"
+                                        "TRAIN" -> "🚆"
+                                        "FLIGHT" -> "✈️"
+                                        "SPORTS" -> "🏎️"
                                         else -> "🚗"
                                     }
                                     Box(contentAlignment = Alignment.Center) {
@@ -1522,7 +1531,14 @@ private fun TripsScreen(
                                     )
                                     val vLabel = when (trip.vehicleType.uppercase()) {
                                         "BIKE" -> "Bike Ride"
+                                        "SCOOTER" -> "Scooter Ride"
                                         "CYCLE" -> "Cycling Trip"
+                                        "SUV" -> "SUV Drive"
+                                        "BUS" -> "Bus Journey"
+                                        "TREK" -> "Trekking"
+                                        "TRAIN" -> "Train Journey"
+                                        "FLIGHT" -> "Flight"
+                                        "SPORTS" -> "Sports Drive"
                                         else -> "Car Drive"
                                     }
                                     Text(
@@ -1623,49 +1639,59 @@ private fun TripsScreen(
 
                         Spacer(Modifier.height(10.dp))
 
-                        // Route banner
-                        Row(
+                        // Route banner (Responsive transit style that cleanly wraps long addresses without vertical letter stacking)
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(if (darkMode) Color(0xFF151D28) else Color(0xFFF8FAFC))
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
                         ) {
-                            Box(
-                                Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(Green)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = trip.source,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = tbTextColor()
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = "→",
-                                fontSize = 13.sp,
-                                color = Color(0xFF94A3B8)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Box(
-                                Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(Red)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = trip.destination,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = tbTextColor(),
-                                modifier = Modifier.weight(1f)
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(Green)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = trip.source.ifBlank { "Starting Location" },
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = tbTextColor(),
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.padding(start = 3.5.dp, top = 2.dp, bottom = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    Modifier
+                                        .width(1.dp)
+                                        .height(10.dp)
+                                        .background(Color(0xFFCBD5E1))
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text("↓", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(Red)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = trip.destination.ifBlank { "Destination" },
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = tbTextColor(),
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
 
                         Spacer(Modifier.height(10.dp))
@@ -2167,28 +2193,47 @@ private fun CreateTripDialog(
                     }
                 }
                 item {
-                    Text("Select Vehicle Mode", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Select Travel Mode / Vehicle Emoji", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     Spacer(Modifier.height(6.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        listOf("CAR" to "🚗 Car", "BIKE" to "🏍️ Bike", "CYCLE" to "🚲 Cycle").forEach { (vType, vLabel) ->
-                            val isSelected = selectedVehicle == vType
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (isSelected) Blue else Color(0xFFF1F5F9),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) Blue else Color(0xFFCBD5E1)),
-                                modifier = Modifier.weight(1f).clickable { selectedVehicle = vType }
+                    val travelModes = listOf(
+                        "CAR" to "🚗 Car",
+                        "SUV" to "🚙 SUV",
+                        "BIKE" to "🏍️ Bike",
+                        "SCOOTER" to "🛵 Scooter",
+                        "CYCLE" to "🚲 Cycle",
+                        "BUS" to "🚌 Bus",
+                        "TREK" to "🥾 Trek",
+                        "TRAIN" to "🚆 Train",
+                        "FLIGHT" to "✈️ Flight",
+                        "SPORTS" to "🏎️ Sports"
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        travelModes.chunked(3).forEach { rowItems ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Text(
-                                    text = vLabel,
-                                    color = if (isSelected) Color.White else Navy,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    fontSize = 13.sp,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                    modifier = Modifier.padding(vertical = 10.dp)
-                                )
+                                rowItems.forEach { (vType, vLabel) ->
+                                    val isSelected = selectedVehicle == vType
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isSelected) Blue else Color(0xFFF1F5F9),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) Blue else Color(0xFFCBD5E1)),
+                                        modifier = Modifier.weight(1f).clickable { selectedVehicle = vType }
+                                    ) {
+                                        Text(
+                                            text = vLabel,
+                                            color = if (isSelected) Color.White else Navy,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            fontSize = 12.sp,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                            modifier = Modifier.padding(vertical = 8.dp)
+                                        )
+                                    }
+                                }
+                                repeat(3 - rowItems.size) {
+                                    Spacer(Modifier.weight(1f))
+                                }
                             }
                         }
                     }
@@ -2396,6 +2441,7 @@ private fun TrackingScreen(
     initialMode: Int,
     currentUserName: String = "",
     onSaveVehicle: (Vehicle) -> Unit,
+    onNavigateToChat: (() -> Unit)? = null,
     onTripUpdated: ((Trip) -> Unit)? = null
 ) {
     val scope = rememberCoroutineScope()
@@ -2561,7 +2607,13 @@ private fun TrackingScreen(
                                         Surface(
                                             shape = RoundedCornerShape(12.dp),
                                             color = Color(0xFF22C55E).copy(alpha = 0.15f),
-                                            modifier = Modifier.clickable { showGroupChat = true }
+                                            modifier = Modifier.clickable {
+                                                if (onNavigateToChat != null) {
+                                                    onNavigateToChat()
+                                                } else {
+                                                    showGroupChat = true
+                                                }
+                                            }
                                         ) {
                                             Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                                 Text("💬", fontSize = 13.sp)
@@ -4535,11 +4587,9 @@ private fun MoreScreen(
 
 
         item {
-
             InfoCard(
-                title = "Trip team",
-                body =
-                    "$userName · Netra · Karuna · Divakar · Karthik · Akshata · Mohan",
+                title = "Account Status",
+                body = "$userName • Verified Active Traveler",
                 accent = Green
             )
         }
@@ -4834,56 +4884,14 @@ private fun AddEmergencyContactDialog(
 // ============================================================
 
 private fun sampleMembers(): List<TripMember> {
-
+    val name = SessionManager.getUserName().ifBlank { "Traveler" }
+    val id = SessionManager.getUserId().ifBlank { "usr-${name.hashCode()}" }
     return listOf(
-
         TripMember(
-            id = "me",
-            name = "Traveler",
+            id = id,
+            name = name,
             color = 0xFF2F80ED,
             isSharingLocation = true
-        ),
-
-        TripMember(
-            id = "netra",
-            name = "Netra",
-            color = 0xFF27AE60,
-            isSharingLocation = true
-        ),
-
-        TripMember(
-            id = "karuna",
-            name = "Karuna",
-            color = 0xFFE67E22,
-            isSharingLocation = true
-        ),
-
-        TripMember(
-            id = "divakar",
-            name = "Divakar",
-            color = 0xFF9B59B6,
-            isSharingLocation = true
-        ),
-
-        TripMember(
-            id = "karthik",
-            name = "Karthik",
-            color = 0xFFE74C3C,
-            isSharingLocation = true
-        ),
-
-        TripMember(
-            id = "akshata",
-            name = "Akshata",
-            color = 0xFF16A085,
-            isSharingLocation = true
-        ),
-
-        TripMember(
-            id = "mohan",
-            name = "Mohan",
-            color = 0xFF8E44AD,
-            isSharingLocation = false
         )
     )
 }
@@ -4893,45 +4901,7 @@ private fun sampleMembers(): List<TripMember> {
 // SAMPLE EXPENSES
 // ============================================================
 
-private fun sampleExpenses(): List<Expense> {
-
-    val members = setOf(
-        "prashant",
-        "netra",
-        "karuna",
-        "divakar",
-        "karthik",
-        "akshata",
-        "mohan"
-    )
-
-    return listOf(
-
-        Expense(
-            id = "1",
-            title = "Homestay",
-            amount = 6800.0,
-            paidBy = "netra",
-            splitWith = members
-        ),
-
-        Expense(
-            id = "2",
-            title = "Fuel",
-            amount = 3200.0,
-            paidBy = "prashant",
-            splitWith = members
-        ),
-
-        Expense(
-            id = "3",
-            title = "Lunch",
-            amount = 1560.0,
-            paidBy = "karuna",
-            splitWith = members
-        )
-    )
-}
+private fun sampleExpenses(): List<Expense> = emptyList()
 
 
 // ============================================================

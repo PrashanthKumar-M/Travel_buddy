@@ -43,6 +43,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -253,9 +255,11 @@ internal fun ProfileScreen(
 
         Column(
             Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
-                .padding(top = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(top = 12.dp, bottom = 100.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -314,10 +318,10 @@ internal fun ProfileScreen(
                         Modifier
                             .fillMaxWidth()
                             .clickable(onClick = onToggleDarkMode)
-                            .padding(vertical = 10.dp, horizontal = 12.dp),
+                            .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Dark mode", Modifier.weight(1f), color = primaryText)
+                        Text("Dark mode", Modifier.weight(1f), color = if (darkMode) Color(0xFFEAF0F8) else Tb.Navy)
                         Switch(checked = darkMode, onCheckedChange = { onToggleDarkMode() })
                     }
                     ProfileRow("Settings", "", null)
@@ -557,7 +561,8 @@ internal fun LocalChatScreen(
     tripName: String = "Coorg Ride",
     tripId: String = "coorg-ride",
     userName: String = SessionManager.getUserName().ifBlank { "You" },
-    repository: com.travelbuddy.app.data.TravelRepository? = null
+    repository: com.travelbuddy.app.data.TravelRepository? = null,
+    onClose: (() -> Unit)? = null
 ) {
     val dark = LocalTravelBuddyDarkMode.current
     val primaryText = if (dark) Color(0xFFF8FAFC) else Tb.Navy
@@ -567,42 +572,46 @@ internal fun LocalChatScreen(
     val sentBubble = Tb.Blue
 
     var messageText by remember { mutableStateOf("") }
-    var messages by remember(userName) {
-        mutableStateOf(
-            listOf(
-                LocalChatMessage("1", "Netra", "Reached the coffee estate entrance! Weather is amazing ☕🌲", "10:14 AM", false),
-                LocalChatMessage("2", "Karuna", "Taking fuel stop at Shell Highway, on my way in 10 mins ⛽", "10:18 AM", false),
-                LocalChatMessage("3", userName, "Just crossed the toll. Vehicle tracking shows 12 km left! 🚗", "10:22 AM", true),
-                LocalChatMessage("4", "Suresh", "Group ETA is 11:30 AM. Tag tracking is active for bags.", "10:24 AM", false)
-            )
-        )
-    }
+    // Zero hardcoded messages - dynamic state loaded from server
+    var messages by remember(tripId) { mutableStateOf<List<LocalChatMessage>>(emptyList()) }
 
     val scope = rememberCoroutineScope()
+    val myId = remember(userName) { SessionManager.getUserId().ifBlank { "usr-${userName.hashCode()}" } }
 
+    // Live continuous 2s polling loop across all connected devices
     LaunchedEffect(tripId, repository, userName) {
-        if (repository != null) {
-            repository.getChatMessages(tripId).onSuccess { remoteList ->
-                if (remoteList.isNotEmpty()) {
-                    messages = remoteList.map { r ->
-                        LocalChatMessage(
-                            id = r.id,
-                            sender = r.senderName,
-                            text = r.message,
-                            time = "Live",
-                            isMe = r.senderId == "usr-1" || r.senderName.equals(userName, ignoreCase = true)
-                        )
-                    }
+        val repo = repository ?: return@LaunchedEffect
+        while (isActive) {
+            repo.getChatMessages(tripId).onSuccess { remoteList ->
+                messages = remoteList.map { r ->
+                    val isMe = r.senderName.equals(userName, ignoreCase = true) || r.senderId == myId
+                    val timeStr = if (r.timestamp > 0) {
+                        val secDiff = (System.currentTimeMillis() - r.timestamp) / 1000
+                        when {
+                            secDiff < 60 -> "Just now"
+                            secDiff < 3600 -> "${secDiff / 60}m ago"
+                            else -> "${secDiff / 3600}h ago"
+                        }
+                    } else "Just now"
+                    LocalChatMessage(
+                        id = r.id.ifBlank { "${r.timestamp}-${r.senderName}" },
+                        sender = r.senderName,
+                        text = r.displayMessage,
+                        time = timeStr,
+                        isMe = isMe
+                    )
                 }
             }
+            delay(2000)
         }
     }
 
     val onSendMessage: (String) -> Unit = { text ->
         val clean = text.trim()
         if (clean.isNotBlank()) {
+            val localId = "temp-${System.currentTimeMillis()}"
             val newMsg = LocalChatMessage(
-                id = (messages.size + 1).toString(),
+                id = localId,
                 sender = userName,
                 text = clean,
                 time = "Just now",
@@ -615,11 +624,26 @@ internal fun LocalChatScreen(
                     repository.sendChatMessage(
                         tripId,
                         com.travelbuddy.app.data.RemoteSendMessageRequest(
-                            senderId = "usr-1",
+                            senderId = myId,
                             senderName = userName,
+                            text = clean,
                             message = clean
                         )
-                    )
+                    ).onSuccess {
+                        // Immediately refresh server messages
+                        repository.getChatMessages(tripId).onSuccess { remoteList ->
+                            messages = remoteList.map { r ->
+                                val isMe = r.senderName.equals(userName, ignoreCase = true) || r.senderId == myId
+                                LocalChatMessage(
+                                    id = r.id.ifBlank { "${r.timestamp}-${r.senderName}" },
+                                    sender = r.senderName,
+                                    text = r.displayMessage,
+                                    time = "Just now",
+                                    isMe = isMe
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -634,90 +658,125 @@ internal fun LocalChatScreen(
     )
 
     Column(Modifier.fillMaxSize()) {
-        // Chat Header
+        // Chat Header with Back Button (Redirect Support)
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = if (dark) Color(0xFF151C26) else Color.White,
-            shadowElevation = 1.dp
+            shadowElevation = 2.dp
         ) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Avatar(tripName, Tb.Green, 42)
-                Spacer(Modifier.width(12.dp))
+                if (onClose != null) {
+                    IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = primaryText
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
+                Avatar(tripName, Tb.Green, 38)
+                Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(tripName, fontWeight = FontWeight.Bold, color = primaryText, fontSize = 17.sp)
+                    Text(tripName, fontWeight = FontWeight.Bold, color = primaryText, fontSize = 16.sp)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(8.dp).clip(CircleShape).background(Tb.Green))
-                        Spacer(Modifier.width(6.dp))
+                        Box(Modifier.size(7.dp).clip(CircleShape).background(Tb.Green))
+                        Spacer(Modifier.width(5.dp))
                         Text(
-                            "${members.count { it.isSharingLocation }}/${members.size} members live • Active Group Chat",
+                            "${members.size} trip members • Live Sync",
                             color = secondaryText,
-                            fontSize = 12.sp
+                            fontSize = 11.sp
                         )
                     }
                 }
             }
         }
 
-        // Messages List
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            items(messages.size) { index ->
-                val msg = messages[index]
-                val isMe = msg.isMe
+        // Messages List or Dynamic Empty State
+        if (messages.isEmpty()) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("💬", fontSize = 42.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "No messages yet in '$tripName'",
+                        fontWeight = FontWeight.Bold,
+                        color = primaryText,
+                        fontSize = 16.sp
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Say hi to other travelers in your trip! Send a message or tap a quick status chip below.",
+                        color = secondaryText,
+                        fontSize = 13.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(messages.size) { index ->
+                    val msg = messages[index]
+                    val isMe = msg.isMe
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start
-                ) {
-                    if (!isMe) {
-                        Avatar(msg.sender, Tb.Blue, 32)
-                        Spacer(Modifier.width(8.dp))
-                    }
-
-                    Column(
-                        horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
-                        modifier = Modifier.fillMaxWidth(0.82f)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start
                     ) {
                         if (!isMe) {
-                            Text(
-                                msg.sender,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Tb.Blue,
-                                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp)
-                            )
+                            Avatar(msg.sender, Tb.Blue, 32)
+                            Spacer(Modifier.width(8.dp))
                         }
 
-                        Surface(
-                            shape = RoundedCornerShape(
-                                topStart = 16.dp,
-                                topEnd = 16.dp,
-                                bottomStart = if (isMe) 16.dp else 4.dp,
-                                bottomEnd = if (isMe) 4.dp else 16.dp
-                            ),
-                            color = if (isMe) sentBubble else receivedBubble,
-                            shadowElevation = 0.5.dp
+                        Column(
+                            horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
+                            modifier = Modifier.fillMaxWidth(0.82f)
                         ) {
-                            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            if (!isMe) {
                                 Text(
-                                    msg.text,
-                                    color = if (isMe) Color.White else primaryText,
-                                    fontSize = 14.sp,
-                                    lineHeight = 20.sp
+                                    msg.sender,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Tb.Blue,
+                                    modifier = Modifier.padding(start = 4.dp, bottom = 2.dp)
                                 )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    msg.time,
-                                    color = if (isMe) Color.White.copy(alpha = 0.75f) else secondaryText,
-                                    fontSize = 10.sp,
-                                    modifier = Modifier.align(Alignment.End)
-                                )
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(
+                                    topStart = 16.dp,
+                                    topEnd = 16.dp,
+                                    bottomStart = if (isMe) 16.dp else 4.dp,
+                                    bottomEnd = if (isMe) 4.dp else 16.dp
+                                ),
+                                color = if (isMe) sentBubble else receivedBubble,
+                                shadowElevation = 0.5.dp
+                            ) {
+                                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                                    Text(
+                                        msg.text,
+                                        color = if (isMe) Color.White else primaryText,
+                                        fontSize = 14.sp,
+                                        lineHeight = 20.sp
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        msg.time,
+                                        color = if (isMe) Color.White.copy(alpha = 0.75f) else secondaryText,
+                                        fontSize = 10.sp,
+                                        modifier = Modifier.align(Alignment.End)
+                                    )
+                                }
                             }
                         }
                     }

@@ -321,179 +321,163 @@ fun LiveGoogleMapView(
                 )
             }
 
-            // Real-time Waypoint & Traveler Badges (UI Layer matching attached image)
+            // Real-time Waypoint & Traveler Badges (Compact, non-obtrusive map pins so route is 100% visible!)
             val cx = panOffsetX
             val cy = panOffsetY
 
-            // 1. Waypoint 1: Starting Point (Completed ✓)
+            // 1. Waypoint 1: Starting Point (Compact Green Pin)
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .offset(x = (cx - 130f * zoomLevel).dp, y = (cy - 110f * zoomLevel).dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFF16A34A),
-                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                        shadowElevation = 3.dp,
-                        modifier = Modifier.size(24.dp)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF16A34A),
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
+                    shadowElevation = 4.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                        }
-                    }
-                    Spacer(Modifier.width(6.dp))
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color.White,
-                        shadowElevation = 4.dp,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
-                    ) {
-                        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                            Text("1. $sourceName", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF0F172A))
-                            Text("10:30 AM", fontSize = 9.sp, color = Color(0xFF64748B))
-                            Text("Completed", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF16A34A))
-                        }
+                        Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text(sourceName.take(12), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp)
                     }
                 }
             }
 
-            // 2. Waypoint 2: Highway Checkpoint (Completed ✓)
+            // 2. Waypoint 2: Highway Checkpoint (Compact Pin)
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .offset(x = (cx - 70f * zoomLevel).dp, y = (cy - 50f * zoomLevel).dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFF16A34A),
-                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                        shadowElevation = 3.dp,
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                        }
-                    }
-                    Spacer(Modifier.width(6.dp))
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color.White,
-                        shadowElevation = 4.dp,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
-                    ) {
-                        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                            Text("2. Route Checkpoint", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF0F172A))
-                            Text("11:30 AM", fontSize = 9.sp, color = Color(0xFF64748B))
-                            Text("Completed", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF16A34A))
-                        }
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFF16A34A),
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
+                    shadowElevation = 3.dp,
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("✓", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
 
-            // 3. Waypoint 3: Active Traveler (You) (In Progress 🔵 with Avatar)
+            // 3. Waypoint 3: Active Traveler (You) (Moving Animated Avatar & Beacon Pin)
             val travelerOffset = (motionProgress - 0.5f) * 30f
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .offset(x = (cx - 10f * zoomLevel + travelerOffset).dp, y = (cy + 10f * zoomLevel + travelerOffset).dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Surface(
-                            shape = CircleShape,
-                            color = Color(0xFF1D64F2),
-                            border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                            shadowElevation = 4.dp,
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            TravelerAvatar(avatarType = "MALE_1", size = 30.dp)
-                        }
-                    }
-                    Spacer(Modifier.width(6.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color.White,
-                        shadowElevation = 4.dp,
-                        border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF1D64F2))
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF1D64F2),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
+                        shadowElevation = 4.dp
                     ) {
-                        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                            val activeName = members.firstOrNull()?.name ?: "You"
-                            Text("3. $activeName", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF1D64F2))
-                            Text("45 km/h • 01:18 PM", fontSize = 9.sp, color = Color(0xFF64748B))
-                            Text("In Progress", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D64F2))
+                        val activeName = members.firstOrNull()?.name?.take(10) ?: "You"
+                        val vIcon = when (vehicleType.uppercase()) {
+                            "BIKE", "MOTORCYCLE" -> "🏍️"
+                            "CYCLE", "BICYCLE" -> "🚲"
+                            "SCOOTER" -> "🛵"
+                            "SUV" -> "🚙"
+                            "BUS" -> "🚌"
+                            else -> "🚗"
                         }
+                        Text(
+                            "$vIcon $activeName • 45 km/h",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF1D64F2),
+                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
+                        shadowElevation = 4.dp,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        TravelerAvatar(avatarType = members.firstOrNull()?.avatarType ?: "MALE_1", size = 26.dp)
                     }
                 }
             }
 
-            // 4. Waypoint 4: Rest / Fuel Stop (Pending 🕒)
+            // 4. Waypoint 4: Rest / Fuel Stop (Compact Orange Pin)
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .offset(x = (cx + 40f * zoomLevel).dp, y = (cy + 60f * zoomLevel).dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFFEA580C),
-                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                        shadowElevation = 3.dp,
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Filled.Schedule, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                        }
-                    }
-                    Spacer(Modifier.width(6.dp))
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color.White,
-                        shadowElevation = 4.dp,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
-                    ) {
-                        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                            Text("4. Rest Stop & Refuel", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF0F172A))
-                            Text("02:30 PM", fontSize = 9.sp, color = Color(0xFF64748B))
-                            Text("Pending", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEA580C))
-                        }
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFFEA580C),
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
+                    shadowElevation = 3.dp,
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("4", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
 
-            // 5. Waypoint 5: Final Destination (Pending 🕒)
+            // 5. Waypoint 5: Final Destination (Compact Red Flag Pin)
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .offset(x = (cx + 90f * zoomLevel).dp, y = (cy + 120f * zoomLevel).dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFFEA580C),
-                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                        shadowElevation = 3.dp,
-                        modifier = Modifier.size(24.dp)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFDC2626),
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
+                    shadowElevation = 4.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Filled.Schedule, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                        }
+                        Text("🏁", fontSize = 10.sp)
+                        Spacer(Modifier.width(3.dp))
+                        Text(destinationName.take(12), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp)
                     }
-                    Spacer(Modifier.width(6.dp))
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color.White,
-                        shadowElevation = 4.dp,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
-                    ) {
-                        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                            Text("5. $destinationName", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF0F172A))
-                            Text("03:30 PM", fontSize = 9.sp, color = Color(0xFF64748B))
-                            Text("Pending", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEA580C))
-                        }
-                    }
+                }
+            }
+
+            // Milestone Route Timeline Strip across the bottom of the map
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = if (darkMode) Color(0xFF0F172A).copy(alpha = 0.92f) else Color.White.copy(alpha = 0.94f),
+                shadowElevation = 3.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (darkMode) Color(0xFF334155) else Color(0xFFE2E8F0))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    MilestoneStep("1. Start", "✓ Done", Color(0xFF16A34A))
+                    Text("→", fontSize = 10.sp, color = Color.Gray)
+                    MilestoneStep("2. Checkpoint", "✓ Done", Color(0xFF16A34A))
+                    Text("→", fontSize = 10.sp, color = Color.Gray)
+                    MilestoneStep("3. Live Traveler", "🔵 45km/h", Color(0xFF1D64F2))
+                    Text("→", fontSize = 10.sp, color = Color.Gray)
+                    MilestoneStep("4. Rest Stop", "🕒 2:30 PM", Color(0xFFEA580C))
+                    Text("→", fontSize = 10.sp, color = Color.Gray)
+                    MilestoneStep("5. Destination", "🏁 Final", Color(0xFFDC2626))
                 }
             }
 
@@ -609,5 +593,13 @@ fun LiveGoogleMapView(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MilestoneStep(title: String, status: String, statusColor: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(title, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        Text(status, fontSize = 8.sp, color = statusColor, fontWeight = FontWeight.SemiBold)
     }
 }
