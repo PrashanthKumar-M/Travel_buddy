@@ -19,6 +19,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -655,6 +658,15 @@ internal fun LocalChatScreen(
         "🚦 Slow traffic ahead"
     )
 
+    val listState = rememberLazyListState()
+
+    // Smoothly scroll to the latest message as new messages arrive
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         // Chat Header with Back Button (Redirect Support)
         Surface(
@@ -663,7 +675,7 @@ internal fun LocalChatScreen(
             shadowElevation = 2.dp
         ) {
             Row(
-                Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 10.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (onClose != null) {
@@ -719,9 +731,10 @@ internal fun LocalChatScreen(
             }
         } else {
             LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                state = listState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(messages.size) { index ->
                     val msg = messages[index]
@@ -729,16 +742,17 @@ internal fun LocalChatScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start
+                        horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start,
+                        verticalAlignment = Alignment.Bottom
                     ) {
                         if (!isMe) {
-                            Avatar(msg.sender, Tb.Blue, 32)
-                            Spacer(Modifier.width(8.dp))
+                            Avatar(msg.sender, Tb.Blue, 30)
+                            Spacer(Modifier.width(6.dp))
                         }
 
                         Column(
                             horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
-                            modifier = Modifier.fillMaxWidth(0.82f)
+                            modifier = Modifier.widthIn(max = 290.dp)
                         ) {
                             if (!isMe) {
                                 Text(
@@ -760,20 +774,43 @@ internal fun LocalChatScreen(
                                 color = if (isMe) sentBubble else receivedBubble,
                                 shadowElevation = 0.5.dp
                             ) {
-                                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                                    Text(
-                                        msg.text,
-                                        color = if (isMe) Color.White else primaryText,
-                                        fontSize = 14.sp,
-                                        lineHeight = 20.sp
-                                    )
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        msg.time,
-                                        color = if (isMe) Color.White.copy(alpha = 0.75f) else secondaryText,
-                                        fontSize = 10.sp,
-                                        modifier = Modifier.align(Alignment.End)
-                                    )
+                                val isShort = msg.text.length < 24 && !msg.text.contains("\n")
+                                if (isShort) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.Bottom,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = msg.text,
+                                            color = if (isMe) Color.White else primaryText,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Normal
+                                        )
+                                        Text(
+                                            text = msg.time,
+                                            color = if (isMe) Color.White.copy(alpha = 0.70f) else secondaryText,
+                                            fontSize = 10.sp
+                                        )
+                                    }
+                                } else {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = msg.text,
+                                            color = if (isMe) Color.White else primaryText,
+                                            fontSize = 14.sp,
+                                            lineHeight = 20.sp
+                                        )
+                                        Spacer(Modifier.height(3.dp))
+                                        Text(
+                                            text = msg.time,
+                                            color = if (isMe) Color.White.copy(alpha = 0.70f) else secondaryText,
+                                            fontSize = 10.sp,
+                                            modifier = Modifier.align(Alignment.End)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -807,21 +844,21 @@ internal fun LocalChatScreen(
             }
         }
 
-        // Message input bar
+        // Message input bar with IME (keyboard) padding
         Surface(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+            modifier = Modifier.fillMaxWidth().imePadding(),
             color = if (dark) Color(0xFF151C26) else Color.White,
             shadowElevation = 3.dp
         ) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
                     value = messageText,
                     onValueChange = { messageText = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Message trip members...", color = secondaryText, fontSize = 14.sp) },
+                    placeholder = { Text("Message trip members...", color = secondaryText, fontSize = 13.sp) },
                     singleLine = true,
                     shape = RoundedCornerShape(24.dp)
                 )
@@ -832,7 +869,7 @@ internal fun LocalChatScreen(
                     },
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = Tb.Blue),
-                    modifier = Modifier.size(46.dp),
+                    modifier = Modifier.size(44.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
                 ) {
                     Icon(

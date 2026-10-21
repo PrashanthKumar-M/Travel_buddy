@@ -305,7 +305,7 @@ internal fun TravelBuddyMain(
             containerColor = if (darkMode) Color(0xFF10151C) else Background,
 
             topBar = {
-                if (selectedTab != AppTab.More) {
+                if (selectedTab != AppTab.More && selectedTab != AppTab.Chat) {
                     Header(
                         userName = currentUserName,
                         sosSent = sosSent,
@@ -1329,18 +1329,18 @@ private fun InfoCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = tbCardBg()),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(12.dp)
     ) {
 
         Row(
-            modifier = Modifier.padding(16.dp)
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
 
             Box(
-
                 modifier = Modifier
                     .width(4.dp)
-                    .height(44.dp)
+                    .height(34.dp)
                     .background(
                         color = accent,
                         shape = RoundedCornerShape(4.dp)
@@ -1358,17 +1358,18 @@ private fun InfoCard(
                 Text(
                     text = title,
                     fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
                     color = tbTextColor()
                 )
 
                 Spacer(
-                    modifier = Modifier.height(3.dp)
+                    modifier = Modifier.height(2.dp)
                 )
 
                 Text(
                     text = body,
                     color = tbSubtextColor(),
-                    fontSize = 13.sp
+                    fontSize = 12.sp
                 )
             }
         }
@@ -3882,11 +3883,11 @@ private fun ExpensesScreen(
                     ) {
                         Text(
                             "Trip Split Group",
-                            modifier = Modifier.padding(vertical = 10.dp),
+                            modifier = Modifier.padding(vertical = 8.dp),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             color = if (splitMode == 0) Color.White else tbTextColor(),
                             fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            fontSize = 12.sp
                         )
                     }
                     Surface(
@@ -3896,11 +3897,11 @@ private fun ExpensesScreen(
                     ) {
                         Text(
                             "Manual Personal Split",
-                            modifier = Modifier.padding(vertical = 10.dp),
+                            modifier = Modifier.padding(vertical = 8.dp),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             color = if (splitMode == 1) Color.White else tbTextColor(),
                             fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            fontSize = 12.sp
                         )
                     }
                 }
@@ -4005,17 +4006,18 @@ private fun ExpensesScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             if (splitMode == 0) "Trip Expense Split" else "Personal Split",
-                            fontSize = 24.sp,
+                            fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = tbTextColor()
                         )
-                        Text(groupTitle, fontSize = 13.sp, color = tbSubtextColor())
+                        Text(groupTitle, fontSize = 12.sp, color = tbSubtextColor())
                     }
                     Button(
                         onClick = { showAddExpense = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                        colors = ButtonDefaults.buttonColors(containerColor = Blue),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                     ) {
-                        Text("+ Add Bill")
+                        Text("+ Add Bill", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -4043,7 +4045,7 @@ private fun ExpensesScreen(
 
         // Member Balances
         item {
-            Text("Individual Balances", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = tbTextColor())
+            Text("Individual Balances", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tbTextColor())
         }
         balances.forEach { balance ->
             val member = currentGroupMembers.firstOrNull { it.id == balance.memberId }
@@ -4059,7 +4061,7 @@ private fun ExpensesScreen(
         // Suggested Settlements with "Settle Up" action
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Settlement Plan", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = tbTextColor())
+                Text("Settlement Plan", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tbTextColor())
                 if (activeSettlements.isNotEmpty()) {
                     Text("${activeSettlements.size} pending", fontSize = 12.sp, color = tbSubtextColor())
                 }
@@ -4072,10 +4074,10 @@ private fun ExpensesScreen(
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color(0xFFF1F5F9))
                 ) {
-                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Check, null, tint = Green)
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Check, null, tint = Green, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("All balances are settled up!", color = tbTextColor(), fontWeight = FontWeight.SemiBold)
+                        Text("All balances are settled up!", color = tbTextColor(), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     }
                 }
             }
@@ -4095,8 +4097,8 @@ private fun ExpensesScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("${from.name} ➔ ${to.name}", fontWeight = FontWeight.Bold, color = tbTextColor(), fontSize = 14.sp)
-                                Text("Owes ₹${money(settlement.amount)}", color = Blue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text("${from.name} ➔ ${to.name}", fontWeight = FontWeight.Bold, color = tbTextColor(), fontSize = 13.sp)
+                                Text("Owes ₹${money(settlement.amount)}", color = Blue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
                             Button(
                                 onClick = {
@@ -4117,7 +4119,7 @@ private fun ExpensesScreen(
 
         // All Expenses History
         item {
-            Text("Expenses History (${currentExpenses.size})", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = tbTextColor())
+            Text("Expenses History (${currentExpenses.size})", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tbTextColor())
         }
         currentExpenses.forEach { expense ->
             val payer = currentGroupMembers.firstOrNull { it.id == expense.paidBy }
@@ -4230,58 +4232,44 @@ private fun ExpenseSummary(
         }
 
     Card(
-
         colors = CardDefaults.cardColors(
             containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Soft
         ),
-
-        shape = RoundedCornerShape(18.dp),
-
+        shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-
         Row(
-
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp),
-
-            horizontalArrangement =
-                Arrangement.SpaceBetween,
-
-            verticalAlignment =
-                Alignment.CenterVertically
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-
             Column {
-
                 Text(
                     text = "TRIP TOTAL",
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     color = tbSubtextColor()
                 )
-
                 Text(
                     text = "₹${money(total)}",
-                    fontSize = 28.sp,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = tbTextColor()
                 )
             }
-
             Column(
-                horizontalAlignment =
-                    Alignment.End
+                horizontalAlignment = Alignment.End
             ) {
-
                 Text(
                     text = "${expenses.size} expenses",
+                    fontSize = 12.sp,
                     color = tbSubtextColor()
                 )
-
                 Text(
                     text = "Split equally",
                     color = Green,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
                 )
             }
