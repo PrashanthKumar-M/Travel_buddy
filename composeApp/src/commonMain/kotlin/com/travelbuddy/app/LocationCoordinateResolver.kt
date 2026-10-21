@@ -51,6 +51,12 @@ object LocationCoordinateResolver {
         "koppal" to Pair(15.3524, 76.1554),
         "haveri" to Pair(14.7954, 75.3991),
         "chamarajanagar" to Pair(11.9261, 76.9437),
+        "nandi hills" to Pair(13.3702, 77.6835),
+        "abbey falls" to Pair(12.4533, 75.7176),
+        "raja seat" to Pair(12.4172, 75.7369),
+        "talakaveri" to Pair(12.3854, 75.4907),
+        "bidar fort" to Pair(17.9255, 77.5255),
+        "mullayanagiri" to Pair(13.3916, 75.7214),
 
         // Neighbouring States & Popular Tourist Spots
         "goa" to Pair(15.2993, 74.1240),
@@ -58,6 +64,14 @@ object LocationCoordinateResolver {
         "hyderabad" to Pair(17.3850, 78.4867),
         "chennai" to Pair(13.0827, 80.2707),
         "mumbai" to Pair(19.0760, 72.8777),
+        "pune" to Pair(18.5204, 73.8567),
+        "ooty" to Pair(11.4102, 76.6950),
+        "kodaikanal" to Pair(10.2381, 77.4892),
+        "wayanad" to Pair(11.6854, 76.1320),
+        "munnar" to Pair(10.0889, 77.0595),
+        "kochi" to Pair(9.9312, 76.2673),
+        "trivandrum" to Pair(8.5241, 76.9366),
+        "thiruvananthapuram" to Pair(8.5241, 76.9366),
         "pune" to Pair(18.5204, 73.8567),
         "ooty" to Pair(11.4100, 76.6950),
         "wayanad" to Pair(11.6854, 76.1320),
@@ -101,24 +115,43 @@ object LocationCoordinateResolver {
     )
 
     /**
-     * Resolves geographic coordinates for a given city name.
-     * Sanitizes inputs and searches known database, with fuzzy matching.
+     * Resolves geographic coordinates for a given city name, full address, or pasted coordinates/links.
+     * Sanitizes inputs, extracts GPS coordinates if present, and searches known database.
      */
     fun resolveCoordinates(cityName: String, fallbackLat: Double = 12.9716, fallbackLng: Double = 77.5946): Pair<Double, Double> {
-        val clean = cityName.trim().lowercase()
+        val clean = cityName.trim()
         if (clean.isBlank()) return Pair(fallbackLat, fallbackLng)
 
-        // 1. Direct match
-        cityCoordinates[clean]?.let { return it }
+        // 1. Direct coordinate parsing (e.g. "12.9716, 77.5946" or "12.9716 77.5946" or "q=12.9716,77.5946" or "@12.9716,77.5946")
+        val coordRegex = Regex("""(-?\d{1,3}\.\d+)[,\s/]+(-?\d{1,3}\.\d+)""")
+        val match = coordRegex.find(clean)
+        if (match != null) {
+            val lat = match.groupValues[1].toDoubleOrNull()
+            val lng = match.groupValues[2].toDoubleOrNull()
+            if (lat != null && lng != null && lat in -90.0..90.0 && lng in -180.0..180.0) {
+                return Pair(lat, lng)
+            }
+        }
 
-        // 2. Token / contains match (e.g. "Bidar, Karnataka" -> "bidar")
+        val lower = clean.lowercase()
+
+        // 2. Direct match in dictionary
+        cityCoordinates[lower]?.let { return it }
+
+        // 3. Comma-separated address token match (e.g. "MG Road, Indiranagar, Bengaluru, Karnataka 560038")
+        val tokens = lower.split(',', '-', ';', ' ', '/').map { it.trim() }.filter { it.length >= 3 }
+        for (token in tokens) {
+            cityCoordinates[token]?.let { return it }
+        }
+
+        // 4. Substring / contains match
         for ((name, coords) in cityCoordinates) {
-            if (clean.contains(name) || name.contains(clean)) {
+            if (lower.contains(name) || name.contains(lower)) {
                 return coords
             }
         }
 
-        // 3. Fallback for unknown place: generate reproducible deterministic offset based on hash
+        // 5. Fallback for unknown place: generate reproducible deterministic offset based on hash
         val hash = abs(clean.hashCode())
         val latOffset = (hash % 100) / 100.0 * 2.0 - 1.0
         val lngOffset = ((hash / 100) % 100) / 100.0 * 2.0 - 1.0

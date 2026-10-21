@@ -1,8 +1,31 @@
 package com.travelbuddy.app.domain
 
-data class Trip(val id:String,val name:String,val source:String,val destination:String,val dates:String,val status:TripStatus,val members:List<TripMember>,val coverImage:String? = null)
+data class Trip(
+    val id: String,
+    val name: String,
+    val source: String,
+    val destination: String,
+    val dates: String,
+    val status: TripStatus,
+    val members: List<TripMember>,
+    val coverImage: String? = null,
+    val vehicleType: String = "CAR", // "CAR", "BIKE", "CYCLE"
+    val tripCode: String = id
+)
+
 enum class TripStatus { PLANNING, LIVE, COMPLETED }
-data class TripMember(val id:String,val name:String,val color:Long,val isSharingLocation:Boolean)
+
+data class TripMember(
+    val id: String,
+    val name: String,
+    val color: Long,
+    val isSharingLocation: Boolean,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val speedKmh: Double? = null,
+    val batteryPercent: Int? = null,
+    val avatarType: String = "MALE_1"
+)
 data class Expense(val id:String,val title:String,val amount:Double,val paidBy:String,val splitWith:Set<String>)
 data class Balance(val memberId:String,val paid:Double,val owes:Double){ val net:Double get()=paid-owes }
 data class Settlement(val from:String,val to:String,val amount:Double)

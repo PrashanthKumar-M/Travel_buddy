@@ -8,6 +8,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PlatformStorage.init(applicationContext)
+        PlatformBattery.appContext = applicationContext
         AndroidNotificationHelper.appContext = applicationContext
         val permissions = mutableListOf<String>()
         if (checkSelfPermission(android.Manifest.permission.SEND_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {

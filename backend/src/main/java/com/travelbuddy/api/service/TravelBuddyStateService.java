@@ -382,7 +382,8 @@ public class TravelBuddyStateService {
                 req.createdBy(),
                 cover,
                 members,
-                System.currentTimeMillis()
+                System.currentTimeMillis(),
+                req.vehicleType() != null && !req.vehicleType().isBlank() ? req.vehicleType() : "CAR"
         );
         trips.put(id, trip);
         tripCodeToId.put(code, id);
@@ -418,7 +419,8 @@ public class TravelBuddyStateService {
                     trip.createdBy(),
                     coverImage,
                     trip.members(),
-                    trip.createdAt()
+                    trip.createdAt(),
+                    trip.vehicleType()
             ));
         }
     }
@@ -435,7 +437,21 @@ public class TravelBuddyStateService {
         String cleanCode = code != null ? code.trim() : "";
         String tripId = tripCodeToId.get(cleanCode.toUpperCase());
         if (tripId == null) {
-            tripId = trips.containsKey(cleanCode) ? cleanCode : (trips.containsKey(cleanCode.toLowerCase()) ? cleanCode.toLowerCase() : null);
+            tripId = tripCodeToId.get(cleanCode);
+        }
+        if (tripId == null) {
+            if (trips.containsKey(cleanCode)) {
+                tripId = cleanCode;
+            } else if (trips.containsKey(cleanCode.toLowerCase())) {
+                tripId = cleanCode.toLowerCase();
+            } else {
+                for (Trip t : trips.values()) {
+                    if (t.id().equalsIgnoreCase(cleanCode) || t.tripCode().equalsIgnoreCase(cleanCode)) {
+                        tripId = t.id();
+                        break;
+                    }
+                }
+            }
         }
         if (tripId == null) return Optional.empty();
         Trip trip = trips.get(tripId);
@@ -466,9 +482,20 @@ public class TravelBuddyStateService {
                     trip.createdBy(),
                     trip.coverImage(),
                     updatedMembers,
-                    trip.createdAt()
+                    trip.createdAt(),
+                    trip.vehicleType()
             );
             trips.put(tripId, updatedTrip);
+
+            // Broadcast to WebSocket listeners so other devices immediately refresh
+            if (webSocketBroadcastListener != null) {
+                String json = String.format(
+                        "{\"type\":\"member_joined\",\"tripId\":\"%s\",\"userId\":\"%s\",\"userName\":\"%s\"}",
+                        tripId, userId, userName
+                );
+                webSocketBroadcastListener.accept(json);
+            }
+
             return Optional.of(updatedTrip);
         }
         return Optional.of(trip);
@@ -492,8 +519,10 @@ public class TravelBuddyStateService {
         Trip trip = trips.get(req.tripId());
         if (trip != null) {
             List<TripMember> updated = new ArrayList<>();
+            boolean found = false;
             for (TripMember m : trip.members()) {
                 if (m.id().equals(req.userId()) || m.name().equalsIgnoreCase(req.userId())) {
+                    found = true;
                     updated.add(new TripMember(
                             m.id(),
                             m.name(),
@@ -509,6 +538,19 @@ public class TravelBuddyStateService {
                     updated.add(m);
                 }
             }
+            if (!found) {
+                updated.add(new TripMember(
+                        req.userId(),
+                        req.userId(),
+                        0xFF27AE60L,
+                        true,
+                        req.latitude(),
+                        req.longitude(),
+                        req.speed(),
+                        req.battery(),
+                        System.currentTimeMillis()
+                ));
+            }
             trips.put(trip.id(), new Trip(
                     trip.id(),
                     trip.name(),
@@ -520,8 +562,18 @@ public class TravelBuddyStateService {
                     trip.createdBy(),
                     trip.coverImage(),
                     updated,
-                    trip.createdAt()
+                    trip.createdAt(),
+                    trip.vehicleType()
             ));
+
+            if (webSocketBroadcastListener != null) {
+                String json = String.format(
+                        Locale.US,
+                        "{\"type\":\"location\",\"tripId\":\"%s\",\"userId\":\"%s\",\"name\":\"%s\",\"latitude\":%.6f,\"longitude\":%.6f,\"speed\":%.1f,\"battery\":%d,\"timestamp\":%d}",
+                        trip.id(), req.userId(), req.userId(), req.latitude(), req.longitude(), req.speed(), req.battery(), System.currentTimeMillis()
+                );
+                webSocketBroadcastListener.accept(json);
+            }
         }
     }
 

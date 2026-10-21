@@ -115,13 +115,19 @@ class KtorTravelRepository(
             val dst = obj["destination"]?.jsonPrimitive?.contentOrNull ?: ""
             val dates = obj["dates"]?.jsonPrimitive?.contentOrNull ?: ""
             val cover = obj["coverImage"]?.jsonPrimitive?.contentOrNull
+            val vType = obj["vehicleType"]?.jsonPrimitive?.contentOrNull ?: "CAR"
             val members = obj["members"]?.jsonArray?.mapNotNull { m ->
                 val mObj = m.jsonObject
                 val mId = mObj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
                 val mName = mObj["name"]?.jsonPrimitive?.contentOrNull ?: mId
-                TripMember(mId, mName, 0xFF2F80ED, true)
+                val lat = mObj["latitude"]?.jsonPrimitive?.doubleOrNull
+                val lng = mObj["longitude"]?.jsonPrimitive?.doubleOrNull
+                val speed = mObj["speedKmh"]?.jsonPrimitive?.doubleOrNull ?: mObj["speed"]?.jsonPrimitive?.doubleOrNull
+                val battery = mObj["batteryPercent"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: mObj["battery"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+                val avatar = mObj["avatarType"]?.jsonPrimitive?.contentOrNull ?: "MALE_1"
+                TripMember(mId, mName, 0xFF2F80ED, true, lat, lng, speed, battery, avatar)
             } ?: emptyList()
-            Trip(id, name, src, dst, dates, TripStatus.LIVE, members, coverImage = cover)
+            Trip(id, name, src, dst, dates, TripStatus.LIVE, members, coverImage = cover, vehicleType = vType)
         }
     }
 
@@ -148,12 +154,16 @@ class KtorTravelRepository(
         val jsonArray = Json.parseToJsonElement(text).jsonArray
         jsonArray.mapNotNull { element ->
             val obj = element.jsonObject
+            val msgText = obj["text"]?.jsonPrimitive?.contentOrNull
+                ?: obj["message"]?.jsonPrimitive?.contentOrNull
+                ?: ""
             RemoteChatMessage(
                 id = obj["id"]?.jsonPrimitive?.contentOrNull ?: "",
                 tripId = obj["tripId"]?.jsonPrimitive?.contentOrNull ?: tripId,
                 senderId = obj["senderId"]?.jsonPrimitive?.contentOrNull ?: "",
                 senderName = obj["senderName"]?.jsonPrimitive?.contentOrNull ?: "",
-                message = obj["message"]?.jsonPrimitive?.contentOrNull ?: "",
+                message = msgText,
+                text = msgText,
                 timestamp = obj["timestamp"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
             )
         }
@@ -166,13 +176,17 @@ class KtorTravelRepository(
         }
         response.requireSuccess()
         val obj = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+        val msgText = obj["text"]?.jsonPrimitive?.contentOrNull
+            ?: obj["message"]?.jsonPrimitive?.contentOrNull
+            ?: request.text
         RemoteChatMessage(
             id = obj["id"]?.jsonPrimitive?.contentOrNull ?: "",
             tripId = obj["tripId"]?.jsonPrimitive?.contentOrNull ?: tripId,
             senderId = obj["senderId"]?.jsonPrimitive?.contentOrNull ?: request.senderId,
             senderName = obj["senderName"]?.jsonPrimitive?.contentOrNull ?: request.senderName,
-            message = obj["message"]?.jsonPrimitive?.contentOrNull ?: request.message,
-            timestamp = obj["timestamp"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
+            message = msgText,
+            text = msgText,
+            timestamp = obj["timestamp"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: System.currentTimeMillis()
         )
     }
 
@@ -192,11 +206,19 @@ private fun String.jsonObjectOrNull(): JsonObject? = runCatching { Json.parseToJ
 private fun String.jsonString(key: String): String? = jsonObjectOrNull()?.get(key)?.jsonPrimitive?.contentOrNull
 
 private fun String.toTripOrFallback(request: CreateTripRequest?, expectedId: String = ""): Trip {
-    val json = jsonObjectOrNull()
+    val rootObj = jsonObjectOrNull()
+    val json = if (rootObj?.containsKey("trip") == true) rootObj["trip"]?.jsonObject else rootObj
+    val vType = json?.get("vehicleType")?.jsonPrimitive?.contentOrNull ?: request?.vehicleType ?: "CAR"
     val members = json?.get("members")?.jsonArray?.mapNotNull { element ->
         val item = element.jsonObject
         val id = item["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-        TripMember(id, item["name"]?.jsonPrimitive?.contentOrNull ?: id, 0xFF2F80ED, true)
+        val name = item["name"]?.jsonPrimitive?.contentOrNull ?: id
+        val lat = item["latitude"]?.jsonPrimitive?.doubleOrNull
+        val lng = item["longitude"]?.jsonPrimitive?.doubleOrNull
+        val speed = item["speedKmh"]?.jsonPrimitive?.doubleOrNull ?: item["speed"]?.jsonPrimitive?.doubleOrNull
+        val battery = item["batteryPercent"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: item["battery"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+        val avatar = item["avatarType"]?.jsonPrimitive?.contentOrNull ?: "MALE_1"
+        TripMember(id, name, 0xFF2F80ED, true, lat, lng, speed, battery, avatar)
     } ?: request?.members?.map { TripMember(it, it, 0xFF2F80ED, true) } ?: emptyList()
     val fallbackDynamicId = request?.id ?: "trip-${(100000..999999).random()}"
     return Trip(
@@ -207,7 +229,8 @@ private fun String.toTripOrFallback(request: CreateTripRequest?, expectedId: Str
         dates = json?.get("dates")?.jsonPrimitive?.contentOrNull ?: request?.dates ?: "Planned",
         status = TripStatus.LIVE,
         members = members,
-        coverImage = json?.get("coverImage")?.jsonPrimitive?.contentOrNull ?: request?.coverImage
+        coverImage = json?.get("coverImage")?.jsonPrimitive?.contentOrNull ?: request?.coverImage,
+        vehicleType = vType
     )
 }
 

@@ -16,10 +16,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -50,11 +51,8 @@ data class MapTarget(
     val isInsideSafeZone: Boolean = true
 )
 
-/**
- * Calculates Haversine distance between two coordinates in kilometers.
- */
 fun haversineDistanceKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-    val r = 6371.0 // Radius of the Earth in km
+    val r = 6371.0
     val dLat = (lat2 - lat1) * (PI / 180.0)
     val dLon = (lon2 - lon1) * (PI / 180.0)
     val a = sin(dLat / 2).pow(2.0) +
@@ -72,7 +70,7 @@ fun formatDistance(km: Double): String {
 }
 
 fun formatEta(km: Double, speedKmh: Double = 40.0): String {
-    val speed = if (speedKmh > 5.0) speedKmh else 35.0
+    val speed = if (speedKmh > 5.0) speedKmh else 40.0
     val totalHours = km / speed
     val totalMinutes = (totalHours * 60).roundToInt()
     return if (totalMinutes < 60) {
@@ -85,11 +83,13 @@ fun formatEta(km: Double, speedKmh: Double = 40.0): String {
 }
 
 /**
- * Interactive Google Map visualization modeled directly on Google Maps Navigation:
- * Real street network, arterial avenues, organic green parks, rivers,
- * signature royal blue navigation polyline with amber traffic slowdown,
- * iconic Google Maps red teardrop destination pin, pulsating origin beacon,
- * and live member tracking with real-time distance matrix.
+ * Realistic Live Google Map Navigation matching professional field tracking apps:
+ * - Clean urban road network and waterway
+ * - Signature blue navigation polyline with directional chevrons '>'
+ * - Waypoint milestone badges (Completed ✓, In Progress 🔵 with pulse/avatar, Pending 🕒)
+ * - Animated traveler endpoint movement
+ * - Vehicle indicator (Car 🚗, Bike 🏍️, Cycle 🚲)
+ * - Fullscreen toggle and interactive zoom
  */
 @Composable
 fun LiveGoogleMapView(
@@ -100,11 +100,14 @@ fun LiveGoogleMapView(
     currentUserLng: Double = 77.5946,
     members: List<TripMember>,
     vehicle: Vehicle? = null,
+    vehicleType: String = "CAR",
     childBagDevice: MapTarget? = null,
     destinationName: String = "Coorg Valley",
     destinationLat: Double = 12.3375,
     destinationLng: Double = 75.8069,
     isLiveUsersMode: Boolean = true,
+    isFullscreen: Boolean = false,
+    onToggleFullscreen: (() -> Unit)? = null,
     modifier: Modifier = Modifier.fillMaxWidth().height(340.dp),
     onSelectTarget: ((MapTarget) -> Unit)? = null
 ) {
@@ -115,26 +118,36 @@ fun LiveGoogleMapView(
     var panOffsetY by remember { mutableStateOf(0f) }
     var selectedTarget by remember { mutableStateOf<MapTarget?>(null) }
 
-    // Pulsing animation for user's GPS beacon
+    // Pulsing animation for active traveler GPS beacon
     val infiniteTransition = rememberInfiniteTransition()
     val pulseRadius by infiniteTransition.animateFloat(
-        initialValue = 12f,
-        targetValue = 32f,
+        initialValue = 14f,
+        targetValue = 36f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = FastOutSlowInEasing),
+            animation = tween(1600, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         )
     )
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.55f,
+        initialValue = 0.6f,
         targetValue = 0.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = FastOutSlowInEasing),
+            animation = tween(1600, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         )
     )
 
-    // Dynamic Geographic Coordinate Resolution based on real city names
+    // Smooth subtle movement of the endpoint along the route
+    val motionProgress by infiniteTransition.animateFloat(
+        initialValue = 0.44f,
+        targetValue = 0.54f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(4000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        )
+    )
+
+    // Dynamic Geographic Coordinate Resolution
     val (resolvedSrcLat, resolvedSrcLng) = remember(sourceName, sourceLat, sourceLng) {
         LocationCoordinateResolver.resolveCoordinates(sourceName, sourceLat, sourceLng)
     }
@@ -142,88 +155,31 @@ fun LiveGoogleMapView(
         LocationCoordinateResolver.resolveCoordinates(destinationName, destinationLat, destinationLng)
     }
 
-    // Only include real trip targets (no fake clutter in Live Users mode)
-    val targets = remember(sourceName, destinationName, members, vehicle, childBagDevice, isLiveUsersMode, resolvedSrcLat, resolvedDstLat) {
-        val list = mutableListOf<MapTarget>()
+    val totalDistance = remember(sourceName, destinationName, resolvedSrcLat, resolvedDstLat) {
+        LocationCoordinateResolver.calculateRoadDistanceKm(sourceName, destinationName)
+    }
+    val drivingEta = remember(totalDistance) {
+        LocationCoordinateResolver.calculateDrivingEta(totalDistance)
+    }
 
-        // 1. Origin (Starting Point)
-        list.add(
-            MapTarget(
-                id = "origin-point",
-                title = sourceName,
-                subtitle = "Starting Point",
-                latitude = resolvedSrcLat,
-                longitude = resolvedSrcLng,
-                color = 0xFF1D64F2L,
-                type = "SOURCE"
-            )
-        )
-
-        // 2. Destination
-        list.add(
-            MapTarget(
-                id = "dest-point",
-                title = destinationName,
-                subtitle = "Destination",
-                latitude = resolvedDstLat,
-                longitude = resolvedDstLng,
-                color = 0xFFEA4335L,
-                type = "DESTINATION"
-            )
-        )
-
-        // 3. Real Trip Members
-        members.forEachIndexed { idx, m ->
-            list.add(
-                MapTarget(
-                    id = m.id,
-                    title = m.name,
-                    subtitle = if (idx == 0) "You (Sharing Live)" else m.name,
-                    latitude = currentUserLat + (if (idx == 0) 0.0 else (idx * 0.003 - 0.0015)),
-                    longitude = currentUserLng + (if (idx == 0) 0.0 else (idx * 0.004 - 0.002)),
-                    speedKmh = if (m.isSharingLocation) 45.0 else 0.0,
-                    batteryPercent = 92 - (idx * 6),
-                    color = m.color,
-                    type = "USER"
-                )
-            )
-        }
-
-        // Only add vehicle or child bag in their dedicated tabs
-        if (!isLiveUsersMode) {
-            vehicle?.let { v ->
-                list.add(
-                    MapTarget(
-                        id = v.id,
-                        title = v.name,
-                        subtitle = "Registration: ${v.registrationNumber}",
-                        latitude = v.latitude,
-                        longitude = v.longitude,
-                        speedKmh = v.speedKmh,
-                        batteryPercent = v.batteryPercent,
-                        color = 0xFF27AE60L,
-                        type = "VEHICLE"
-                    )
-                )
-            }
-            childBagDevice?.let { list.add(it) }
-        }
-
-        list
+    val vehicleIcon = when (vehicleType.uppercase()) {
+        "BIKE" -> "🏍️"
+        "CYCLE" -> "🚲"
+        else -> "🚗"
     }
 
     Card(
         modifier = modifier
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(if (isFullscreen) 0.dp else 22.dp))
             .border(
-                1.dp,
+                if (isFullscreen) 0.dp else 1.dp,
                 if (darkMode) Color(0xFF334155) else Color(0xFFCBD5E1),
-                RoundedCornerShape(22.dp)
+                RoundedCornerShape(if (isFullscreen) 0.dp else 22.dp)
             ),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(if (isFullscreen) 0.dp else 22.dp),
         colors = CardDefaults.cardColors(
             containerColor = when (mapTheme) {
-                MapTheme.GOOGLE_STREETS -> Color(0xFFF3F4F6)
+                MapTheme.GOOGLE_STREETS -> Color(0xFFF4F6F8)
                 MapTheme.SATELLITE -> Color(0xFF192823)
                 MapTheme.DARK_NAVIGATION -> Color(0xFF111827)
             }
@@ -240,375 +196,308 @@ fun LiveGoogleMapView(
                     }
                 }
         ) {
-            // Realistic Google Maps Canvas: Authentic roads, avenues, parks, river, and route
+            // Realistic Map Canvas (Canvas Layer)
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val cx = size.width / 2 + panOffsetX
                 val cy = size.height / 2 + panOffsetY
 
                 val streetBg = when (mapTheme) {
-                    MapTheme.GOOGLE_STREETS -> Color(0xFFF4F3F0)
+                    MapTheme.GOOGLE_STREETS -> Color(0xFFF3F5F7)
                     MapTheme.SATELLITE -> Color(0xFF1B261D)
-                    MapTheme.DARK_NAVIGATION -> Color(0xFF19202C)
+                    MapTheme.DARK_NAVIGATION -> Color(0xFF131B26)
                 }
                 drawRect(color = streetBg)
 
                 val parkColor = when (mapTheme) {
-                    MapTheme.GOOGLE_STREETS -> Color(0xFFDCEFD8)
+                    MapTheme.GOOGLE_STREETS -> Color(0xFFE2F4E0)
                     MapTheme.SATELLITE -> Color(0xFF233824)
-                    MapTheme.DARK_NAVIGATION -> Color(0xFF1E3A28)
+                    MapTheme.DARK_NAVIGATION -> Color(0xFF1B3828)
                 }
                 val waterColor = when (mapTheme) {
-                    MapTheme.GOOGLE_STREETS -> Color(0xFFC7E0FC)
+                    MapTheme.GOOGLE_STREETS -> Color(0xFFD3E7FA)
                     MapTheme.SATELLITE -> Color(0xFF183B54)
-                    MapTheme.DARK_NAVIGATION -> Color(0xFF12283C)
+                    MapTheme.DARK_NAVIGATION -> Color(0xFF142E46)
                 }
-                val majorRoadColor = when (mapTheme) {
+                val roadColor = when (mapTheme) {
                     MapTheme.GOOGLE_STREETS -> Color.White
                     MapTheme.SATELLITE -> Color(0xFF4A5568)
-                    MapTheme.DARK_NAVIGATION -> Color(0xFF2C394B)
+                    MapTheme.DARK_NAVIGATION -> Color(0xFF253342)
                 }
-                val majorRoadBorder = when (mapTheme) {
-                    MapTheme.GOOGLE_STREETS -> Color(0xFFDADCE0)
+                val roadBorder = when (mapTheme) {
+                    MapTheme.GOOGLE_STREETS -> Color(0xFFE2E8F0)
                     MapTheme.SATELLITE -> Color(0xFF2D3748)
                     MapTheme.DARK_NAVIGATION -> Color(0xFF1E293B)
                 }
-                val minorRoadColor = when (mapTheme) {
-                    MapTheme.GOOGLE_STREETS -> Color(0xFFE8EAED)
-                    MapTheme.SATELLITE -> Color(0xFF323F4B)
-                    MapTheme.DARK_NAVIGATION -> Color(0xFF222D3D)
+
+                // 1. Natural Parks & Green zones
+                drawRoundRect(
+                    color = parkColor,
+                    topLeft = Offset(cx - 200f * zoomLevel, cy - 140f * zoomLevel),
+                    size = Size(110f * zoomLevel, 90f * zoomLevel),
+                    cornerRadius = CornerRadius(20f, 20f)
+                )
+                drawRoundRect(
+                    color = parkColor,
+                    topLeft = Offset(cx + 40f * zoomLevel, cy + 30f * zoomLevel),
+                    size = Size(130f * zoomLevel, 80f * zoomLevel),
+                    cornerRadius = CornerRadius(24f, 24f)
+                )
+
+                // 2. Realistic River / Canal running diagonally
+                val river = Path().apply {
+                    moveTo(cx - 220f * zoomLevel, cy + 130f * zoomLevel)
+                    cubicTo(
+                        cx - 80f * zoomLevel, cy + 80f * zoomLevel,
+                        cx + 30f * zoomLevel, cy + 160f * zoomLevel,
+                        cx + 220f * zoomLevel, cy + 110f * zoomLevel
+                    )
+                }
+                drawPath(river, waterColor, style = Stroke(width = 24f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+
+                // 3. Grid street network
+                val step = 55f * zoomLevel
+                for (i in -4..4) {
+                    drawLine(roadBorder, Offset(cx - 240f * zoomLevel, cy + i * step), Offset(cx + 240f * zoomLevel, cy + i * step), strokeWidth = 5f * zoomLevel)
+                    drawLine(roadColor, Offset(cx - 240f * zoomLevel, cy + i * step), Offset(cx + 240f * zoomLevel, cy + i * step), strokeWidth = 3f * zoomLevel)
+                    drawLine(roadBorder, Offset(cx + i * step, cy - 200f * zoomLevel), Offset(cx + i * step, cy + 200f * zoomLevel), strokeWidth = 5f * zoomLevel)
+                    drawLine(roadColor, Offset(cx + i * step, cy - 200f * zoomLevel), Offset(cx + i * step, cy + 200f * zoomLevel), strokeWidth = 3f * zoomLevel)
                 }
 
-                // 1. Organic Parks & Nature Areas
-                drawRoundRect(
-                    color = parkColor,
-                    topLeft = Offset(cx - 160f * zoomLevel, cy + 30f * zoomLevel),
-                    size = androidx.compose.ui.geometry.Size(90f * zoomLevel, 70f * zoomLevel),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(18f, 18f)
-                )
-                drawRoundRect(
-                    color = parkColor,
-                    topLeft = Offset(cx + 40f * zoomLevel, cy - 130f * zoomLevel),
-                    size = androidx.compose.ui.geometry.Size(110f * zoomLevel, 60f * zoomLevel),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(20f, 20f)
-                )
+                // 4. Primary Route Polyline (From Top-Left to Bottom-Right matching attached image)
+                val p1 = Offset(cx - 130f * zoomLevel, cy - 110f * zoomLevel)
+                val p2 = Offset(cx - 70f * zoomLevel, cy - 50f * zoomLevel)
+                val p3 = Offset(cx - 10f * zoomLevel, cy + 10f * zoomLevel)
+                val p4 = Offset(cx + 40f * zoomLevel, cy + 60f * zoomLevel)
+                val p5 = Offset(cx + 90f * zoomLevel, cy + 120f * zoomLevel)
 
-                // 2. Realistic Water Body / River
-                val riverPath = Path()
-                riverPath.moveTo(cx - 190f * zoomLevel, cy + 130f * zoomLevel)
-                riverPath.cubicTo(
-                    cx - 110f * zoomLevel, cy + 100f * zoomLevel,
-                    cx - 70f * zoomLevel, cy + 140f * zoomLevel,
-                    cx + 170f * zoomLevel, cy + 120f * zoomLevel
-                )
-                drawPath(riverPath, waterColor, style = Stroke(width = 22f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                val routePath = Path().apply {
+                    moveTo(p1.x, p1.y)
+                    lineTo(p1.x + 20f * zoomLevel, p1.y + 40f * zoomLevel)
+                    lineTo(p2.x, p2.y)
+                    lineTo(p2.x + 25f * zoomLevel, p2.y + 35f * zoomLevel)
+                    lineTo(p3.x, p3.y)
+                    lineTo(p3.x + 20f * zoomLevel, p3.y + 30f * zoomLevel)
+                    lineTo(p4.x, p4.y)
+                    lineTo(p4.x + 20f * zoomLevel, p4.y + 35f * zoomLevel)
+                    lineTo(p5.x, p5.y)
+                }
 
-                // 3. Minor Urban Street Network (non-grid, natural city pattern)
-                drawLine(minorRoadColor, Offset(cx - 180f * zoomLevel, cy - 60f * zoomLevel), Offset(cx + 180f * zoomLevel, cy - 60f * zoomLevel), strokeWidth = 5f * zoomLevel)
-                drawLine(minorRoadColor, Offset(cx - 180f * zoomLevel, cy + 10f * zoomLevel), Offset(cx + 180f * zoomLevel, cy + 10f * zoomLevel), strokeWidth = 5f * zoomLevel)
-                drawLine(minorRoadColor, Offset(cx - 180f * zoomLevel, cy + 80f * zoomLevel), Offset(cx + 180f * zoomLevel, cy + 80f * zoomLevel), strokeWidth = 5f * zoomLevel)
-                drawLine(minorRoadColor, Offset(cx - 70f * zoomLevel, cy - 160f * zoomLevel), Offset(cx - 70f * zoomLevel, cy + 160f * zoomLevel), strokeWidth = 5f * zoomLevel)
-                drawLine(minorRoadColor, Offset(cx + 70f * zoomLevel, cy - 160f * zoomLevel), Offset(cx + 70f * zoomLevel, cy + 160f * zoomLevel), strokeWidth = 5f * zoomLevel)
-
-                // 4. Major Arterial Avenues (Double-lined with borders)
-                val avenue1 = Path()
-                avenue1.moveTo(cx - 190f * zoomLevel, cy - 20f * zoomLevel)
-                avenue1.lineTo(cx + 190f * zoomLevel, cy - 20f * zoomLevel)
-                drawPath(avenue1, majorRoadBorder, style = Stroke(width = 12f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round))
-                drawPath(avenue1, majorRoadColor, style = Stroke(width = 8f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round))
-
-                val avenue2 = Path()
-                avenue2.moveTo(cx + 10f * zoomLevel, cy - 160f * zoomLevel)
-                avenue2.lineTo(cx + 10f * zoomLevel, cy + 160f * zoomLevel)
-                drawPath(avenue2, majorRoadBorder, style = Stroke(width = 12f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round))
-                drawPath(avenue2, majorRoadColor, style = Stroke(width = 8f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round))
-
-                // 5. Alternate Route (Lighter blue-gray path branching off with 29 min ETA)
-                val altRoute = Path()
-                altRoute.moveTo(cx + 120f * zoomLevel, cy + 80f * zoomLevel)
-                altRoute.cubicTo(
-                    cx + 90f * zoomLevel, cy - 10f * zoomLevel,
-                    cx - 30f * zoomLevel, cy + 20f * zoomLevel,
-                    cx - 120f * zoomLevel, cy - 80f * zoomLevel
-                )
-                drawPath(altRoute, Color(0xFFBDC7D5), style = Stroke(width = 7f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round))
-
-                // 6. Signature Google Maps Vibrant Blue Navigation Route
-                // Coordinates: Starts at Origin (cx + 120f, cy + 80f) -> Curves west -> Turns north -> Arrives at Dest (cx - 120f, cy - 80f)
-                val mainRoute = Path()
-                mainRoute.moveTo(cx + 120f * zoomLevel, cy + 80f * zoomLevel)
-                mainRoute.lineTo(cx + 40f * zoomLevel, cy + 80f * zoomLevel)
-                mainRoute.cubicTo(
-                    cx + 10f * zoomLevel, cy + 80f * zoomLevel,
-                    cx + 10f * zoomLevel, cy + 20f * zoomLevel,
-                    cx + 10f * zoomLevel, cy - 20f * zoomLevel
-                )
-                mainRoute.lineTo(cx - 40f * zoomLevel, cy - 20f * zoomLevel)
-                mainRoute.cubicTo(
-                    cx - 70f * zoomLevel, cy - 20f * zoomLevel,
-                    cx - 70f * zoomLevel, cy - 80f * zoomLevel,
-                    cx - 120f * zoomLevel, cy - 80f * zoomLevel
-                )
-
-                // Dark Blue Edge Border (Signature Google Maps look)
+                // Outer border of navigation line
                 drawPath(
-                    path = mainRoute,
+                    path = routePath,
                     color = Color(0xFF1557B0),
-                    style = Stroke(
-                        width = 12f * zoomLevel,
-                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                        join = androidx.compose.ui.graphics.StrokeJoin.Round
-                    )
+                    style = Stroke(width = 10f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
                 )
-
-                // Vibrant Royal Blue Core Navigation Line
+                // Vibrant Royal Blue core line
                 drawPath(
-                    path = mainRoute,
-                    color = Color(0xFF1A73E8),
-                    style = Stroke(
-                        width = 8f * zoomLevel,
-                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                        join = androidx.compose.ui.graphics.StrokeJoin.Round
-                    )
+                    path = routePath,
+                    color = Color(0xFF1D64F2),
+                    style = Stroke(width = 6f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
                 )
 
-                // Traffic Congestion Overlay on the Route (Amber/Orange section like attached image)
-                val trafficSegment = Path()
-                trafficSegment.moveTo(cx + 10f * zoomLevel, cy + 40f * zoomLevel)
-                trafficSegment.lineTo(cx + 10f * zoomLevel, cy - 20f * zoomLevel)
-                drawPath(
-                    path = trafficSegment,
-                    color = Color(0xFFFB8C00),
-                    style = Stroke(
-                        width = 8f * zoomLevel,
-                        cap = androidx.compose.ui.graphics.StrokeCap.Round
-                    )
+                // Directional Chevrons '>' along the route
+                val chevrons = listOf(
+                    Offset(cx - 105f * zoomLevel, cy - 80f * zoomLevel),
+                    Offset(cx - 45f * zoomLevel, cy - 20f * zoomLevel),
+                    Offset(cx + 15f * zoomLevel, cy + 35f * zoomLevel),
+                    Offset(cx + 65f * zoomLevel, cy + 90f * zoomLevel)
                 )
+                chevrons.forEach { ch ->
+                    val arrow = Path().apply {
+                        moveTo(ch.x - 4f * zoomLevel, ch.y - 5f * zoomLevel)
+                        lineTo(ch.x + 3f * zoomLevel, ch.y)
+                        lineTo(ch.x - 4f * zoomLevel, ch.y + 5f * zoomLevel)
+                    }
+                    drawPath(arrow, Color.White, style = Stroke(width = 2.5f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                }
 
-                // 7. Authentic Pulsing GPS Beacon at Origin (Source)
-                val originX = cx + 120f * zoomLevel
-                val originY = cy + 80f * zoomLevel
+                // Pulsing beacon at active traveler position
+                val travelerX = cx + (-10f + (motionProgress - 0.5f) * 30f) * zoomLevel
+                val travelerY = cy + (10f + (motionProgress - 0.5f) * 30f) * zoomLevel
                 drawCircle(
-                    color = Color(0xFF1A73E8).copy(alpha = pulseAlpha),
+                    color = Color(0xFF1D64F2).copy(alpha = pulseAlpha),
                     radius = pulseRadius * zoomLevel,
-                    center = Offset(originX, originY)
+                    center = Offset(travelerX, travelerY)
                 )
-                drawCircle(
-                    color = Color.White,
-                    radius = 9f * zoomLevel,
-                    center = Offset(originX, originY)
-                )
-                drawCircle(
-                    color = Color(0xFF1A73E8),
-                    radius = 6f * zoomLevel,
-                    center = Offset(originX, originY)
-                )
-
-                // 8. Authentic Google Maps Red Pin at Destination
-                val destX = cx - 120f * zoomLevel
-                val destY = cy - 80f * zoomLevel
-
-                // Ground drop shadow
-                drawOval(
-                    color = Color(0x35000000),
-                    topLeft = Offset(destX - 10f * zoomLevel, destY + 2f * zoomLevel),
-                    size = androidx.compose.ui.geometry.Size(20f * zoomLevel, 8f * zoomLevel)
-                )
-                // Red pin head
-                drawCircle(
-                    color = Color(0xFFEA4335),
-                    radius = 11f * zoomLevel,
-                    center = Offset(destX, destY - 14f * zoomLevel)
-                )
-                // White center dot
-                drawCircle(
-                    color = Color.White,
-                    radius = 4.5f * zoomLevel,
-                    center = Offset(destX, destY - 14f * zoomLevel)
-                )
-                // Red pin pointer triangle
-                val pinPointer = Path()
-                pinPointer.moveTo(destX - 7f * zoomLevel, destY - 8f * zoomLevel)
-                pinPointer.lineTo(destX + 7f * zoomLevel, destY - 8f * zoomLevel)
-                pinPointer.lineTo(destX, destY)
-                pinPointer.close()
-                drawPath(pinPointer, Color(0xFFEA4335))
             }
 
-            // Real-time Markers & Callouts Layer
-            // 1. Primary Route ETA Speech Bubble directly on the road
+            // Real-time Waypoint & Traveler Badges (UI Layer matching attached image)
             val cx = panOffsetX
             val cy = panOffsetY
+
+            // 1. Waypoint 1: Starting Point (Completed ✓)
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .offset(x = (cx + 10f * zoomLevel).dp, y = (cy - 35f * zoomLevel).dp)
+                    .offset(x = (cx - 130f * zoomLevel).dp, y = (cy - 110f * zoomLevel).dp)
             ) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF1557B0),
-                    shadowElevation = 4.dp
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF16A34A),
+                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
+                        shadowElevation = 3.dp,
+                        modifier = Modifier.size(24.dp)
                     ) {
-                        Text(
-                            text = "25 min",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text("🍃", fontSize = 10.sp)
-                    }
-                }
-            }
-
-            // 2. Alternate Route Callout
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(x = (cx - 40f * zoomLevel).dp, y = (cy + 25f * zoomLevel).dp)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = (if (darkMode) Color(0xFF1E293B) else Color.White).copy(alpha = 0.92f),
-                    shadowElevation = 2.dp,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1))
-                ) {
-                    Text(
-                        text = "29 min",
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        color = if (darkMode) Color.White else Color(0xFF475569),
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 10.sp
-                    )
-                }
-            }
-
-            // 3. Start Point Label Pill
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(x = (cx + 120f * zoomLevel).dp, y = (cy + 105f * zoomLevel).dp)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = (if (darkMode) Color(0xFF1E293B) else Color.White).copy(alpha = 0.95f),
-                    shadowElevation = 3.dp,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1D64F2))
-                ) {
-                    Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF1D64F2)))
-                        Spacer(Modifier.width(4.dp))
-                        Text(sourceName.take(14), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (darkMode) Color.White else Color(0xFF0F172A))
-                    }
-                }
-            }
-
-            // 4. Destination Point Label Pill
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(x = (cx - 120f * zoomLevel).dp, y = (cy - 110f * zoomLevel).dp)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = (if (darkMode) Color(0xFF1E293B) else Color.White).copy(alpha = 0.95f),
-                    shadowElevation = 3.dp,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEA4335))
-                ) {
-                    Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFFEA4335)))
-                        Spacer(Modifier.width(4.dp))
-                        Text(destinationName.take(14), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (darkMode) Color.White else Color(0xFF0F172A))
-                    }
-                }
-            }
-
-            // 5. Real Trip Members along the Route
-            members.forEachIndexed { index, member ->
-                // Position each member realistically along the navigation route
-                val (memberX, memberY) = when (index) {
-                    0 -> (cx + 40f * zoomLevel) to (cy + 80f * zoomLevel) // Member 1 along avenue
-                    1 -> (cx + 10f * zoomLevel) to (cy + 10f * zoomLevel) // Member 2 mid-route
-                    2 -> (cx - 40f * zoomLevel) to (cy - 20f * zoomLevel) // Member 3 approaching destination
-                    else -> (cx - 80f * zoomLevel) to (cy - 60f * zoomLevel)
-                }
-
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .offset(x = memberX.dp, y = memberY.dp)
-                        .clickable {
-                            val target = MapTarget(
-                                id = member.id,
-                                title = member.name,
-                                subtitle = if (index == 0) "You" else member.name,
-                                latitude = currentUserLat,
-                                longitude = currentUserLng,
-                                speedKmh = 45.0,
-                                color = member.color,
-                                type = "USER"
-                            )
-                            selectedTarget = target
-                            onSelectTarget?.invoke(target)
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                         }
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = (if (darkMode) Color(0xFF1E293B) else Color.White).copy(alpha = 0.95f),
-                            shadowElevation = 3.dp,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(member.color))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = if (index == 0) "You" else member.name.take(10),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (darkMode) Color.White else Color(0xFF0F172A)
-                                )
-                                Spacer(Modifier.width(3.dp))
-                                Text(
-                                    text = "45 km/h",
-                                    fontSize = 9.sp,
-                                    color = Color(0xFF1A73E8),
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.White,
+                        shadowElevation = 4.dp,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    ) {
+                        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            Text("1. $sourceName", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF0F172A))
+                            Text("10:30 AM", fontSize = 9.sp, color = Color(0xFF64748B))
+                            Text("Completed", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF16A34A))
                         }
-                        Spacer(Modifier.height(2.dp))
+                    }
+                }
+            }
+
+            // 2. Waypoint 2: Highway Checkpoint (Completed ✓)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(x = (cx - 70f * zoomLevel).dp, y = (cy - 50f * zoomLevel).dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF16A34A),
+                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
+                        shadowElevation = 3.dp,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.White,
+                        shadowElevation = 4.dp,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    ) {
+                        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            Text("2. Route Checkpoint", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF0F172A))
+                            Text("11:30 AM", fontSize = 9.sp, color = Color(0xFF64748B))
+                            Text("Completed", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF16A34A))
+                        }
+                    }
+                }
+            }
+
+            // 3. Waypoint 3: Active Traveler (You) (In Progress 🔵 with Avatar)
+            val travelerOffset = (motionProgress - 0.5f) * 30f
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(x = (cx - 10f * zoomLevel + travelerOffset).dp, y = (cy + 10f * zoomLevel + travelerOffset).dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(contentAlignment = Alignment.Center) {
                         Surface(
-                            modifier = Modifier.size(30.dp),
                             shape = CircleShape,
-                            color = Color(member.color),
+                            color = Color(0xFF1D64F2),
+                            border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
                             shadowElevation = 4.dp,
-                            border = androidx.compose.foundation.BorderStroke(2.dp, Color.White)
+                            modifier = Modifier.size(34.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = getInitials(member.name),
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp
-                                )
-                            }
+                            TravelerAvatar(avatarType = "MALE_1", size = 30.dp)
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.White,
+                        shadowElevation = 4.dp,
+                        border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF1D64F2))
+                    ) {
+                        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            val activeName = members.firstOrNull()?.name ?: "You"
+                            Text("3. $activeName", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF1D64F2))
+                            Text("45 km/h • 01:18 PM", fontSize = 9.sp, color = Color(0xFF64748B))
+                            Text("In Progress", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D64F2))
                         }
                     }
                 }
             }
 
-            // Top-left: Google Maps Route Banner & Distance/ETA (Dynamic real-world calculation)
-            val totalDistance = remember(sourceName, destinationName, resolvedSrcLat, resolvedDstLat) {
-                LocationCoordinateResolver.calculateRoadDistanceKm(sourceName, destinationName)
+            // 4. Waypoint 4: Rest / Fuel Stop (Pending 🕒)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(x = (cx + 40f * zoomLevel).dp, y = (cy + 60f * zoomLevel).dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFEA580C),
+                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
+                        shadowElevation = 3.dp,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Schedule, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.White,
+                        shadowElevation = 4.dp,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    ) {
+                        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            Text("4. Rest Stop & Refuel", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF0F172A))
+                            Text("02:30 PM", fontSize = 9.sp, color = Color(0xFF64748B))
+                            Text("Pending", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEA580C))
+                        }
+                    }
+                }
             }
-            val drivingEta = remember(totalDistance) {
-                LocationCoordinateResolver.calculateDrivingEta(totalDistance)
+
+            // 5. Waypoint 5: Final Destination (Pending 🕒)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(x = (cx + 90f * zoomLevel).dp, y = (cy + 120f * zoomLevel).dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFEA580C),
+                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
+                        shadowElevation = 3.dp,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Schedule, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.White,
+                        shadowElevation = 4.dp,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    ) {
+                        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            Text("5. $destinationName", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF0F172A))
+                            Text("03:30 PM", fontSize = 9.sp, color = Color(0xFF64748B))
+                            Text("Pending", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEA580C))
+                        }
+                    }
+                }
             }
+
+            // Top-left: Google Maps Route Banner & Vehicle Indicator
             Surface(
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -627,7 +516,7 @@ fun LiveGoogleMapView(
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = "Google Maps Route • ${formatDistance(totalDistance)} ($drivingEta)",
+                            text = "$vehicleIcon Route • ${formatDistance(totalDistance)} ($drivingEta)",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (darkMode) Color.White else Color(0xFF1E293B)
@@ -642,7 +531,7 @@ fun LiveGoogleMapView(
                 }
             }
 
-            // Top-right: Map Theme Toggle
+            // Top-right: Map Controls (Fullscreen + Satellite)
             Surface(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -651,26 +540,30 @@ fun LiveGoogleMapView(
                 color = (if (darkMode) Color(0xFF1E293B) else Color.White).copy(alpha = 0.92f),
                 shadowElevation = 3.dp
             ) {
-                Row(modifier = Modifier.padding(2.dp)) {
-                    IconButton(
-                        onClick = { mapTheme = MapTheme.GOOGLE_STREETS },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.Map,
-                            contentDescription = "Streets",
-                            tint = if (mapTheme == MapTheme.GOOGLE_STREETS) Color(0xFF2563EB) else Color.Gray,
-                            modifier = Modifier.size(18.dp)
-                        )
+                Row(modifier = Modifier.padding(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (onToggleFullscreen != null) {
+                        IconButton(
+                            onClick = onToggleFullscreen,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                if (isFullscreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
+                                contentDescription = "Fullscreen",
+                                tint = Color(0xFF2563EB),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                     IconButton(
-                        onClick = { mapTheme = MapTheme.SATELLITE },
+                        onClick = {
+                            mapTheme = if (mapTheme == MapTheme.GOOGLE_STREETS) MapTheme.SATELLITE else MapTheme.GOOGLE_STREETS
+                        },
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
-                            Icons.Filled.Public,
-                            contentDescription = "Satellite",
-                            tint = if (mapTheme == MapTheme.SATELLITE) Color(0xFF2563EB) else Color.Gray,
+                            if (mapTheme == MapTheme.SATELLITE) Icons.Filled.Public else Icons.Filled.Map,
+                            contentDescription = "Theme",
+                            tint = Color(0xFF2563EB),
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -713,81 +606,6 @@ fun LiveGoogleMapView(
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(Icons.Filled.Remove, "Zoom Out", modifier = Modifier.size(18.dp))
-                }
-            }
-        }
-    }
-
-    // Target Detail Inspector Card when a marker is clicked
-    selectedTarget?.let { target ->
-        val distKm = haversineDistanceKm(currentUserLat, currentUserLng, target.latitude, target.longitude)
-        Spacer(Modifier.height(10.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (darkMode) Color(0xFF1E293B) else Color(0xFFF8FAFC)
-            ),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(target.color).copy(alpha = 0.5f))
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    modifier = Modifier.size(42.dp),
-                    shape = CircleShape,
-                    color = Color(target.color)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        when (target.type) {
-                            "VEHICLE" -> Icon(Icons.Filled.DirectionsCar, null, tint = Color.White)
-                            "CHILD_BAG" -> Icon(Icons.Filled.School, null, tint = Color.White)
-                            "DESTINATION" -> Icon(Icons.Filled.LocationOn, null, tint = Color.White)
-                            else -> Text(target.title.take(2).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = target.title,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = if (darkMode) Color.White else Color(0xFF1E293B)
-                    )
-                    Text(
-                        text = target.subtitle,
-                        fontSize = 12.sp,
-                        color = if (darkMode) Color(0xFF94A3B8) else Color(0xFF64748B)
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            text = "📍 ${formatDistance(distKm)} away",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF2563EB)
-                        )
-                        Text(
-                            text = "⏱️ ${formatEta(distKm, target.speedKmh)} ETA",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF16A34A)
-                        )
-                        if (target.batteryPercent < 100) {
-                            Text(
-                                text = "🔋 ${target.batteryPercent}%",
-                                fontSize = 11.sp,
-                                color = if (target.batteryPercent < 20) Color.Red else Color.Gray
-                            )
-                        }
-                    }
-                }
-                IconButton(onClick = { selectedTarget = null }) {
-                    Icon(Icons.Filled.Close, "Close", tint = Color.Gray, modifier = Modifier.size(18.dp))
                 }
             }
         }

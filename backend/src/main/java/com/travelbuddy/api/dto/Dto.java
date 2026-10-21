@@ -27,8 +27,13 @@ public class Dto {
             String dates,
             String createdBy,
             String coverImage,
-            List<String> members
-    ) {}
+            List<String> members,
+            String vehicleType
+    ) {
+        public CreateTripRequest(String id, String tripName, String source, String destination, String dates, String createdBy, String coverImage, List<String> members) {
+            this(id, tripName, source, destination, dates, createdBy, coverImage, members, "CAR");
+        }
+    }
 
     public record JoinTripRequest(
             String tripCode,

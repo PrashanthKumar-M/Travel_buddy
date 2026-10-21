@@ -37,7 +37,8 @@ data class TravelApiConfig(
     val dates: String = "",
     val createdBy: String = "usr-1",
     val coverImage: String? = null,
-    val members: List<String> = emptyList()
+    val members: List<String> = emptyList(),
+    val vehicleType: String = "CAR"
 )
 @Serializable data class JoinTripRequest(
     val tripCode: String,
@@ -67,12 +68,16 @@ data class TravelApiConfig(
     val senderId: String = "",
     val senderName: String = "",
     val message: String = "",
+    val text: String = "",
     val timestamp: Long = 0L
-)
+) {
+    val displayMessage: String get() = if (message.isNotBlank()) message else text
+}
 @Serializable data class RemoteSendMessageRequest(
-    val senderId: String,
-    val senderName: String,
-    val message: String
+    val senderId: String = "usr-1",
+    val senderName: String = "Traveler",
+    val text: String = "",
+    val message: String = text
 )
 
 interface TravelRepository {

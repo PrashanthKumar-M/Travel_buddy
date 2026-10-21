@@ -57,6 +57,10 @@ object SessionManager {
         return PlatformStorage.getString(KEY_LOGGED_IN) == "true"
     }
 
+    fun getUserId(): String {
+        return PlatformStorage.getString(KEY_USER_ID) ?: ""
+    }
+
     fun getUserIdentifier(): String {
         return PlatformStorage.getString(KEY_USER_IDENTIFIER) ?: ""
     }

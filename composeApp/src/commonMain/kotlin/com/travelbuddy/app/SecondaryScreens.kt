@@ -207,6 +207,7 @@ internal fun ProfileScreen(
             else SessionManager.getUserIdentifier().ifBlank { "prashanthkm711@gmail.com" }
         )
     }
+    var selectedAvatar by remember { mutableStateOf("MALE_1") }
     var tempEditValue by remember { mutableStateOf("") }
     var editingField by remember { mutableStateOf<String?>(null) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
@@ -260,13 +261,13 @@ internal fun ProfileScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Avatar(localName, Color(0xFFBC4E23), 56)
-                Spacer(Modifier.width(12.dp))
+                TravelerAvatar(avatarType = selectedAvatar, size = 60.dp)
+                Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(localName, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = primaryText)
                     Spacer(Modifier.height(2.dp))
                     Text(phone, fontSize = 12.sp, color = secondaryText)
-                    Spacer(Modifier.height(3.dp))
+                    Spacer(Modifier.height(4.dp))
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = Tb.Green.copy(alpha = 0.15f)
@@ -280,6 +281,20 @@ internal fun ProfileScreen(
                         )
                     }
                 }
+            }
+
+            // Copyright-Free Play Store Safe Avatar Selector
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = if (darkMode) Color(0xFF1E2836) else Color.White,
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (darkMode) Color(0xFF2C394B) else Color(0xFFE2E8F0))
+            ) {
+                AvatarSelector(
+                    selectedAvatar = selectedAvatar,
+                    onSelect = { selectedAvatar = it },
+                    modifier = Modifier.padding(14.dp)
+                )
             }
 
             Card(Modifier.fillMaxWidth()) {

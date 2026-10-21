@@ -49,8 +49,25 @@ public class Models {
             String createdBy,
             String coverImage,
             List<TripMember> members,
-            long createdAt
-    ) {}
+            long createdAt,
+            String vehicleType
+    ) {
+        public Trip(
+                String id,
+                String name,
+                String source,
+                String destination,
+                String dates,
+                String status,
+                String tripCode,
+                String createdBy,
+                String coverImage,
+                List<TripMember> members,
+                long createdAt
+        ) {
+            this(id, name, source, destination, dates, status, tripCode, createdBy, coverImage, members, createdAt, "CAR");
+        }
+    }
 
     public record LocationEvent(
             String tripId,
