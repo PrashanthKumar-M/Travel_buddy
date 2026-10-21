@@ -400,36 +400,207 @@ fun LiveGoogleMapView(
                 }
             }
 
-            // 3. Dynamic Active Traveler Pin moving along the line
+            // 3. Realistic Vehicle Marker (ACS Bike with Rider from Image 3) moving along the route
             Box(
                 modifier = Modifier.offset(
-                    x = with(density) { (travelerPos.x).toDp() - 44.dp },
-                    y = with(density) { (travelerPos.y).toDp() - 32.dp }
+                    x = with(density) { (travelerPos.x).toDp() - 20.dp },
+                    y = with(density) { (travelerPos.y).toDp() - 44.dp }
+                )
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = Color(0xFF0F172A).copy(alpha = 0.90f),
+                        border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0xFF38BDF8))
+                    ) {
+                        Text(
+                            "ACS",
+                            color = Color.White,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    // Bike / Vehicle Icon with Rider (Image 3)
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                            .border(2.dp, Color(0xFF0284C7), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            when (vehicleType.uppercase()) {
+                                "BIKE", "MOTORCYCLE" -> "🏍️"
+                                "CYCLE", "BICYCLE" -> "🚲"
+                                "SCOOTER" -> "🛵"
+                                "SUV" -> "🚙"
+                                "BUS" -> "🚌"
+                                else -> "🚗"
+                            },
+                            fontSize = 18.sp
+                        )
+                    }
+                }
+            }
+
+            // 4. Live User Location Marker (Ola / Uber Pulsing Radar Halo + Avatar matching Image 3)
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (p1.x).toDp() + 20.dp },
+                    y = with(density) { (p1.y).toDp() + 15.dp }
+                )
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    // Animated radar halo
+                    Canvas(modifier = Modifier.size(54.dp)) {
+                        drawCircle(
+                            color = Color(0xFF00E5FF).copy(alpha = pulseAlpha * 0.35f),
+                            radius = size.minDimension / 2f * (0.6f + (pulseRadius / 25f) * 0.4f)
+                        )
+                        drawCircle(
+                            color = Color(0xFF0284C7).copy(alpha = 0.2f),
+                            radius = size.minDimension / 2.8f
+                        )
+                    }
+                    // Inner Circular Avatar with Cyan glowing ring (Image 3)
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .border(2.dp, Color(0xFF00E5FF), CircleShape)
+                            .padding(2.dp)
+                            .clip(CircleShape)
+                            .background(Color.White),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(CircleShape)
+                                .background(Color(0xFF3B82F6)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = "Live User",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Real Google Map Landmark Overlays matching attached images (Image 1, 2, 3)
+            // SLN College of Arts & Commerce (Image 3)
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx - 100f * zoomLevel).toDp() },
+                    y = with(density) { (cy - 30f * zoomLevel).toDp() }
+                )
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.88f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF64748B)))
+                    Spacer(Modifier.width(4.dp))
+                    Text("SLN COLLEGE OF ARTS &...", fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF334155))
+                }
+            }
+
+            // Zain Telecom (Image 3)
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx + 35f * zoomLevel).toDp() },
+                    y = with(density) { (cy - 10f * zoomLevel).toDp() }
+                )
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.88f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Text("🛍️", fontSize = 7.sp)
+                    Spacer(Modifier.width(3.dp))
+                    Text("Zain Telecom", fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0284C7))
+                }
+            }
+
+            // Chikkajala (Image 1 & 2)
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx + 50f * zoomLevel).toDp() },
+                    y = with(density) { (cy - 55f * zoomLevel).toDp() }
+                )
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("CHIKKAJALA", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E293B))
+                    Text("ಚಿಕ್ಕಜಾಲ", fontSize = 7.sp, color = Color(0xFF64748B))
+                }
+            }
+
+            // Yelahanka New Town (Image 1 & 2)
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx - 65f * zoomLevel).toDp() },
+                    y = with(density) { (cy + 40f * zoomLevel).toDp() }
+                )
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("YELAHANKA", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E293B))
+                    Text("ಯಲಹಂಕ", fontSize = 7.sp, color = Color(0xFF64748B))
+                }
+            }
+
+            // Route shield NH 9 / 104
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx - 25f * zoomLevel).toDp() },
+                    y = with(density) { (cy + 25f * zoomLevel).toDp() }
                 )
             ) {
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFF1D64F2),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
-                    shadowElevation = 4.dp
+                    shape = RoundedCornerShape(3.dp),
+                    color = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0F172A))
                 ) {
-                    val activeName = members.firstOrNull()?.name?.take(10) ?: "You"
-                    val vIcon = when (vehicleType.uppercase()) {
-                        "BIKE", "MOTORCYCLE" -> "🏍️"
-                        "CYCLE", "BICYCLE" -> "🚲"
-                        "SCOOTER" -> "🛵"
-                        "SUV" -> "🚙"
-                        "BUS" -> "🚌"
-                        else -> "🚗"
-                    }
-                    Text(
-                        "$vIcon $activeName • 45 km/h",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 9.sp,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
+                    Text("9", fontSize = 7.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp))
                 }
+            }
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx + 45f * zoomLevel).toDp() },
+                    y = with(density) { (cy + 45f * zoomLevel).toDp() }
+                )
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(3.dp),
+                    color = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0F172A))
+                ) {
+                    Text("104", fontSize = 7.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp))
+                }
+            }
+
+            // Official Google Maps Watermark (Bottom-Left)
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 10.dp, bottom = 38.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("o", color = Color(0xFFEA4335), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("o", color = Color(0xFFFBBC05), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("g", color = Color(0xFF4285F4), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("l", color = Color(0xFF34A853), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("e", color = Color(0xFFEA4335), fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
 
             // Milestone Route Timeline Strip across the bottom of the map

@@ -2,7 +2,9 @@
 package com.travelbuddy.app
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -404,6 +406,7 @@ internal fun TravelBuddyMain(
                             currentUserName = currentUserName,
                             pendingCoverImageUri = pendingCoverImageUri,
                             onPickTripCoverImage = onPickTripCoverImage,
+                            onNavigateToProfile = { selectedTab = AppTab.More },
                             onSelect = { trip ->
                                 activeTrip = trip
                                 activeTripCover = trip.coverImage ?: tripCovers[trip.id]
@@ -1393,7 +1396,8 @@ private fun TripsScreen(
     onSelect: (Trip) -> Unit,
     onDelete: (Trip) -> Unit,
     onCreate: (CreateTripData) -> Unit,
-    onJoinById: (String) -> Unit = {}
+    onJoinById: (String) -> Unit = {},
+    onNavigateToProfile: () -> Unit = {}
 ) {
     var showCreateTrip by remember { mutableStateOf(false) }
     var showJoinTripDialog by remember { mutableStateOf(false) }
@@ -1807,13 +1811,34 @@ private fun TripsScreen(
     }
 
     if (showCreateTrip) {
-        CreateTripDialog(
+        QuickRideScreen(
             currentUserName = currentUserName,
-            pendingCoverImageUri = pendingCoverImageUri,
-            onPickTripCoverImage = onPickTripCoverImage,
-            onDismiss = { showCreateTrip = false },
-            onCreated = {
-                onCreate(it)
+            currentVehicle = sampleVehicle(),
+            onNavigateToProfile = {
+                showCreateTrip = false
+                onNavigateToProfile()
+            },
+            onBack = { showCreateTrip = false },
+            onStartRide = { rideData ->
+                onCreate(
+                    CreateTripData(
+                        id = rideData.id,
+                        source = rideData.source,
+                        destination = rideData.destination,
+                        title = rideData.title,
+                        rideDate = "Today",
+                        flagOffTime = "Now",
+                        reportTime = "Now",
+                        multiDay = false,
+                        notes = rideData.instructions,
+                        memberIds = rideData.members.map { it.id }.toSet(),
+                        dynamicMembers = rideData.members,
+                        vehicleDetails = rideData.vehicleDetails,
+                        vehicleType = rideData.vehicleType,
+                        coverImage = null,
+                        reminderEnabled = false
+                    )
+                )
                 showCreateTrip = false
             }
         )
@@ -2583,6 +2608,150 @@ private fun TrackingScreen(
                             onToggleFullscreen = { isMapFullscreen = !isMapFullscreen },
                             modifier = if (isMapFullscreen) Modifier.fillMaxWidth().height(480.dp) else Modifier.fillMaxWidth().height(320.dp)
                         )
+                    }
+
+                    // FEATURE: OLA / UBER STYLE LIVE TRAVELER PROFILE SHEET (MATCHING IMAGE 3)
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(22.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0)
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 18.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                // Large Profile Avatar with Cyan Glowing Halo (Image 3)
+                                Box(
+                                    modifier = Modifier
+                                        .size(76.dp)
+                                        .border(2.5.dp, Color(0xFF00E5FF), CircleShape)
+                                        .padding(3.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White)
+                                        .border(1.5.dp, Color.White, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(CircleShape)
+                                            .background(Color(0xFF3B82F6)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Person,
+                                            contentDescription = "User Avatar",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(48.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(Modifier.height(10.dp))
+
+                                // Bold Traveler Name (Image 3)
+                                Text(
+                                    text = if (currentUserName.isNotBlank()) currentUserName else "Prashant  malekar",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = tbTextColor()
+                                )
+
+                                Spacer(Modifier.height(3.dp))
+
+                                // Phone Number (Image 3)
+                                Text(
+                                    text = "+919113227150",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = tbSubtextColor()
+                                )
+
+                                Spacer(Modifier.height(2.dp))
+
+                                // Vehicle Registration (Image 3)
+                                Text(
+                                    text = vehicle.registrationNumber.ifBlank { "RUI23227513" },
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = tbTextColor(),
+                                    letterSpacing = 0.5.sp
+                                )
+
+                                Spacer(Modifier.height(14.dp))
+
+                                // Real-time Ola/Uber Live Trip Metrics (Speed, Distance, ETA, Battery)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(
+                                            if (LocalTravelBuddyDarkMode.current) Color(0xFF0F172A) else Color(0xFFF1F5F9),
+                                            RoundedCornerShape(14.dp)
+                                        )
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("SPEED", fontSize = 10.sp, color = tbSubtextColor(), fontWeight = FontWeight.SemiBold)
+                                        Text("45 km/h", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0284C7))
+                                    }
+                                    Box(Modifier.width(1.dp).height(24.dp).background(Color(0xFFCBD5E1)))
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("DISTANCE", fontSize = 10.sp, color = tbSubtextColor(), fontWeight = FontWeight.SemiBold)
+                                        Text("${totalRouteKm.toInt()} km", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = tbTextColor())
+                                    }
+                                    Box(Modifier.width(1.dp).height(24.dp).background(Color(0xFFCBD5E1)))
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("BATTERY", fontSize = 10.sp, color = tbSubtextColor(), fontWeight = FontWeight.SemiBold)
+                                        Text("🔋 ${PlatformBattery.getBatteryLevel()}%", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF16A34A))
+                                    }
+                                }
+
+                                Spacer(Modifier.height(12.dp))
+
+                                // Quick Action Buttons (Call, Chat, Share)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            if (onNavigateToChat != null) onNavigateToChat() else showGroupChat = true
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1D64F2)),
+                                        contentPadding = PaddingValues(vertical = 10.dp)
+                                    ) {
+                                        Text("💬 Live Chat", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            clipboardManager.setText(AnnotatedString(trackingCode))
+                                            codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your buddy."
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0284C7)),
+                                        contentPadding = PaddingValues(vertical = 10.dp)
+                                    ) {
+                                        Text("🔗 Share Trip", color = Color(0xFF0284C7), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Share & Join Tracking Code Card
@@ -4902,9 +5071,9 @@ private fun sampleVehicle(): Vehicle {
 
         id = "vehicle-001",
 
-        name = "TravelBuddy Vehicle",
+        name = "Yamaha R15",
 
-        registrationNumber = "KA01AB1234",
+        registrationNumber = "RUI23227513",
 
         imei = "865XXXXXXXXXXXX",
 
@@ -4914,13 +5083,13 @@ private fun sampleVehicle(): Vehicle {
 
         longitude = 77.5946,
 
-        speedKmh = 42.0,
+        speedKmh = 45.0,
 
         heading = 90.0,
 
         ignitionOn = true,
 
-        batteryPercent = 86,
+        batteryPercent = 88,
 
         lastUpdated = 0L
     )
