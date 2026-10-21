@@ -31,3 +31,7 @@ actual object PlatformStorage {
         prefs?.edit()?.clear()?.apply()
     }
 }
+
+actual fun getCurrentHourOfDay(): Int {
+    return java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+}

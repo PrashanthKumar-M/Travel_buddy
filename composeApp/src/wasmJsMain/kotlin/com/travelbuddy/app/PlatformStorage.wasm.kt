@@ -19,3 +19,7 @@ actual object PlatformStorage {
         memoryStore.clear()
     }
 }
+
+actual fun getCurrentHourOfDay(): Int {
+    return 12
+}

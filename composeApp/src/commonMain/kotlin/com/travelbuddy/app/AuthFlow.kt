@@ -175,7 +175,16 @@ fun TravelBuddyApp(
                 onPasswordLoginSuccess = { identifier, password ->
                     loginIdentifier = identifier
                     userPassword = password
-                    SessionManager.saveSession("tb_jwt_${identifier.hashCode()}", identifier, identifier, identifier, isEmailAuth)
+                    val defaultName = if (isEmailAuth) {
+                        identifier.substringBefore("@").replace(".", " ").replace("_", " ").split(" ")
+                            .filter { it.isNotBlank() }
+                            .joinToString(" ") { it.replaceFirstChar { c -> c.uppercaseChar() } }
+                    } else {
+                        identifier
+                    }
+                    val existingName = SessionManager.getUserName()
+                    val sessionName = if (existingName.isNotBlank() && existingName != "Traveler") existingName else defaultName
+                    SessionManager.saveSession("tb_jwt_${identifier.hashCode()}", identifier, sessionName, identifier, isEmailAuth)
                     stage = AuthStage.Main
                 }
             )
@@ -220,7 +229,16 @@ fun TravelBuddyApp(
                 onBack = { stage = AuthStage.OtpVerification },
                 onPasswordSet = { newPassword ->
                     userPassword = newPassword
-                    SessionManager.saveSession("tb_jwt_${loginIdentifier.hashCode()}", loginIdentifier, loginIdentifier, loginIdentifier, isEmailAuth)
+                    val defaultName = if (isEmailAuth) {
+                        loginIdentifier.substringBefore("@").replace(".", " ").replace("_", " ").split(" ")
+                            .filter { it.isNotBlank() }
+                            .joinToString(" ") { it.replaceFirstChar { c -> c.uppercaseChar() } }
+                    } else {
+                        loginIdentifier
+                    }
+                    val existingName = SessionManager.getUserName()
+                    val sessionName = if (existingName.isNotBlank() && existingName != "Traveler") existingName else defaultName
+                    SessionManager.saveSession("tb_jwt_${loginIdentifier.hashCode()}", loginIdentifier, sessionName, loginIdentifier, isEmailAuth)
                     stage = AuthStage.Main
                 }
             )

@@ -19,7 +19,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -84,8 +90,9 @@ private fun Card(modifier: Modifier = Modifier, content: @Composable () -> Unit)
 
 @Composable
 private fun Avatar(name: String, color: Color, size: Int = 40) {
+    val initials = getInitials(name)
     Box(Modifier.size(size.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
-        Text(name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = (size / 2.5).sp)
+        Text(initials, color = Color.White, fontWeight = FontWeight.Bold, fontSize = (size / 2.7).sp)
     }
 }
 
@@ -181,6 +188,8 @@ internal fun SettlementScreen(
 
 @Composable
 internal fun ProfileScreen(
+    name: String = SessionManager.getUserName().ifBlank { "Traveler" },
+    onNameChange: (String) -> Unit = {},
     phone: String,
     tripCount: Int,
     onOpenVehicle: () -> Unit,
@@ -190,34 +199,104 @@ internal fun ProfileScreen(
     onLogout: () -> Unit,
     onClose: () -> Unit
 ) {
-    var name by remember { mutableStateOf(SessionManager.getUserName().ifBlank { "Prashant" }) }
-    var email by remember { mutableStateOf(if (SessionManager.isEmail()) phone else "trio.prashant26@gmail.com") }
+    var localName by remember(name) { mutableStateOf(name) }
+    var localEmail by remember {
+        mutableStateOf(
+            if (SessionManager.isEmail()) phone
+            else SessionManager.getUserIdentifier().ifBlank { "prashanthkm711@gmail.com" }
+        )
+    }
+    var tempEditValue by remember { mutableStateOf("") }
     var editingField by remember { mutableStateOf<String?>(null) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
     val primaryText = if (darkMode) Color(0xFFEAF0F8) else Tb.Navy
     val secondaryText = if (darkMode) Color(0xFFAEB9C8) else Tb.Gray
-    Column(Modifier.fillMaxSize().background(if (darkMode) Color(0xFF10151C) else Tb.Page)) {
+    val scrollState = rememberScrollState()
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(if (darkMode) Color(0xFF10151C) else Tb.Page)
+            .verticalScroll(scrollState)
+            .padding(bottom = 100.dp)
+    ) {
         Box(
-            Modifier.fillMaxWidth().height(140.dp).background(Color(0xFF64785E))
+            Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+                .background(Brush.horizontalGradient(listOf(Color(0xFF0F3E4D), Color(0xFF1E6F7D))))
         ) {
-            Text("‹", modifier = Modifier.align(Alignment.TopStart).clickable(onClick = onClose).padding(16.dp), color = Color.White, fontSize = 30.sp)
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White
+                )
+            }
+            Text(
+                "My Profile",
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp),
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
         }
-        Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.fillMaxWidth()) {
-                Avatar("P", Color(0xFFBC4E23), 72)
+
+        Column(
+            Modifier
+                .padding(horizontal = 16.dp)
+                .padding(top = 12.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Avatar(localName, Color(0xFFBC4E23), 74)
+                Spacer(Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(localName, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = primaryText)
+                    Spacer(Modifier.height(2.dp))
+                    Text(phone, fontSize = 14.sp, color = secondaryText)
+                    Spacer(Modifier.height(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Tb.Green.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            "Verified Traveler",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            color = Tb.Green,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
             }
-            Column {
-                Text(name, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = primaryText)
-                Text(phone, fontSize = 14.sp, color = secondaryText)
-            }
+
             Card(Modifier.fillMaxWidth()) {
                 Column {
-                    ProfileRow("Name", name, { editingField = "name" })
-                    ProfileRow("Email", email, { editingField = "email" })
+                    ProfileRow("Name", localName) {
+                        tempEditValue = localName
+                        editingField = "name"
+                    }
+                    ProfileRow("Email", localEmail) {
+                        tempEditValue = localEmail
+                        editingField = "email"
+                    }
                     ProfileRow("Manage Vehicles", "1 vehicle", onOpenVehicle)
                     ProfileRow("Trip History", "$tripCount trips", null)
-                    ProfileRow("Expense History", "", onOpenSettlement)
-                    Row(Modifier.fillMaxWidth().clickable(onClick = onToggleDarkMode).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    ProfileRow("Expense History", "View settlements", onOpenSettlement)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onToggleDarkMode)
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text("Dark mode", Modifier.weight(1f), color = primaryText)
                         Switch(checked = darkMode, onCheckedChange = { onToggleDarkMode() })
                     }
@@ -225,17 +304,21 @@ internal fun ProfileScreen(
                     ProfileRow("Help & Support", "", null)
                 }
             }
-            Spacer(Modifier.height(4.dp))
+
+            // Prominent Logout Button
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = { showLogoutConfirm = true }),
                 shape = RoundedCornerShape(16.dp),
                 color = if (darkMode) Color(0xFF3B151E) else Color(0xFFFEF2F2),
-                border = androidx.compose.foundation.BorderStroke(1.dp, if (darkMode) Color(0xFF881337) else Color(0xFFFECDD3))
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (darkMode) Color(0xFF881337) else Color(0xFFFECDD3)
+                )
             ) {
                 Row(
-                    modifier = Modifier.padding(14.dp),
+                    modifier = Modifier.padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
@@ -243,33 +326,35 @@ internal fun ProfileScreen(
                         imageVector = Icons.AutoMirrored.Filled.Logout,
                         contentDescription = "Logout",
                         tint = Tb.Red,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(10.dp))
                     Text(
                         text = "Log Out of Travel Buddy",
                         color = Tb.Red,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
+                        fontSize = 16.sp
                     )
                 }
             }
+
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TravelBuddyLogo(size = 24.dp)
                 Spacer(Modifier.size(8.dp))
-                Text("Travel Buddy v0.1.0", color = secondaryText, fontSize = 12.sp)
+                Text("Travel Buddy v0.1.0 • Ready for Play Store", color = secondaryText, fontSize = 12.sp)
             }
         }
     }
+
     if (showLogoutConfirm) {
         AlertDialog(
             onDismissRequest = { showLogoutConfirm = false },
-            title = { Text("Log Out?") },
-            text = { Text("Are you sure you want to log out? You will need to enter your OTP the next time you sign in.") },
+            title = { Text("Log Out?", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to log out of Travel Buddy? You will need your OTP the next time you sign in.") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -288,16 +373,50 @@ internal fun ProfileScreen(
             }
         )
     }
+
     editingField?.let { field ->
         AlertDialog(
-            onDismissRequest = { editingField = null }, title = { Text("Edit ${if (field == "name") "name" else "email"}") },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (field == "name") OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-                else OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
-                Text("Your changes are stored in this app. Profile API sync can be enabled later.", fontSize = 12.sp, color = Tb.Gray)
-            } },
-            confirmButton = { Button(onClick = { editingField = null }) { Text("Save") } },
-            dismissButton = { Button(onClick = { editingField = null }) { Text("Cancel") } }
+            onDismissRequest = { editingField = null },
+            title = { Text("Edit ${if (field == "name") "Name" else "Email"}", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = tempEditValue,
+                        onValueChange = { tempEditValue = it },
+                        label = { Text(if (field == "name") "Full Name" else "Email Address") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Text(
+                        "Changes will update across your greeting, trips, and account.",
+                        fontSize = 12.sp,
+                        color = Tb.Gray
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val clean = tempEditValue.trim()
+                    if (clean.isNotBlank()) {
+                        if (field == "name") {
+                            localName = clean
+                            onNameChange(clean)
+                            SessionManager.setUserName(clean)
+                        } else {
+                            localEmail = clean
+                            SessionManager.setUserEmail(clean)
+                        }
+                    }
+                    editingField = null
+                }) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingField = null }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 }
@@ -413,6 +532,7 @@ internal fun LocalChatScreen(
     members: List<TripMember>,
     tripName: String = "Coorg Ride",
     tripId: String = "coorg-ride",
+    userName: String = SessionManager.getUserName().ifBlank { "You" },
     repository: com.travelbuddy.app.data.TravelRepository? = null
 ) {
     val dark = LocalTravelBuddyDarkMode.current
@@ -423,12 +543,12 @@ internal fun LocalChatScreen(
     val sentBubble = Tb.Blue
 
     var messageText by remember { mutableStateOf("") }
-    var messages by remember {
+    var messages by remember(userName) {
         mutableStateOf(
             listOf(
                 LocalChatMessage("1", "Netra", "Reached the coffee estate entrance! Weather is amazing ☕🌲", "10:14 AM", false),
                 LocalChatMessage("2", "Karuna", "Taking fuel stop at Shell Highway, on my way in 10 mins ⛽", "10:18 AM", false),
-                LocalChatMessage("3", "Prashant", "Just crossed the toll. Vehicle tracking shows 12 km left! 🚗", "10:22 AM", true),
+                LocalChatMessage("3", userName, "Just crossed the toll. Vehicle tracking shows 12 km left! 🚗", "10:22 AM", true),
                 LocalChatMessage("4", "Suresh", "Group ETA is 11:30 AM. Tag tracking is active for bags.", "10:24 AM", false)
             )
         )
@@ -436,7 +556,7 @@ internal fun LocalChatScreen(
 
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(tripId, repository) {
+    LaunchedEffect(tripId, repository, userName) {
         if (repository != null) {
             repository.getChatMessages(tripId).onSuccess { remoteList ->
                 if (remoteList.isNotEmpty()) {
@@ -446,7 +566,7 @@ internal fun LocalChatScreen(
                             sender = r.senderName,
                             text = r.message,
                             time = "Live",
-                            isMe = r.senderId == "usr-1" || r.senderName.contains("Prashant", ignoreCase = true)
+                            isMe = r.senderId == "usr-1" || r.senderName.equals(userName, ignoreCase = true)
                         )
                     }
                 }
@@ -459,7 +579,7 @@ internal fun LocalChatScreen(
         if (clean.isNotBlank()) {
             val newMsg = LocalChatMessage(
                 id = (messages.size + 1).toString(),
-                sender = "Prashant",
+                sender = userName,
                 text = clean,
                 time = "Just now",
                 isMe = true
@@ -472,7 +592,7 @@ internal fun LocalChatScreen(
                         tripId,
                         com.travelbuddy.app.data.RemoteSendMessageRequest(
                             senderId = "usr-1",
-                            senderName = "Prashant",
+                            senderName = userName,
                             message = clean
                         )
                     )

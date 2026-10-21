@@ -99,9 +99,11 @@ import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 
 
@@ -152,7 +154,21 @@ internal fun TravelBuddyMain(
     val repository = remember(config.apiBaseUrl, config.webSocketUrl) {
         KtorTravelRepository(TravelApiConfig(config.apiBaseUrl, config.webSocketUrl))
     }
-    val currentUserName = SessionManager.getUserName().ifBlank { userPhone }
+    var currentUserName by remember {
+        mutableStateOf(
+            SessionManager.getUserName().ifBlank {
+                if (userPhone.contains("@")) {
+                    userPhone.substringBefore("@").replace(".", " ").replace("_", " ").split(" ")
+                        .filter { it.isNotBlank() }
+                        .joinToString(" ") { it.replaceFirstChar { c -> c.uppercaseChar() } }
+                } else if (userPhone.isNotBlank()) {
+                    userPhone
+                } else {
+                    "Traveler"
+                }
+            }
+        )
+    }
     val currentUserId = SessionManager.getUserIdentifier().ifBlank { "usr-me" }
     val starterMembers = remember(currentUserName, currentUserId) {
         listOf(TripMember(currentUserId, currentUserName, 0xFF1D64F2L, true))
@@ -281,6 +297,7 @@ internal fun TravelBuddyMain(
             topBar = {
                 if (selectedTab != AppTab.More) {
                     Header(
+                        userName = currentUserName,
                         sosSent = sosSent,
                         onSos = {
                             showSosDialog = true
@@ -456,6 +473,7 @@ internal fun TravelBuddyMain(
                             members = members,
                             tripName = activeTrip.name,
                             tripId = activeTrip.id,
+                            userName = currentUserName,
                             repository = if (config.useRemoteApi) repository else null
                         )
                     }
@@ -509,8 +527,13 @@ internal fun TravelBuddyMain(
 
                     AppTab.More -> {
                         ProfileScreen(
+                            name = currentUserName,
+                            onNameChange = { newName ->
+                                currentUserName = newName
+                                SessionManager.setUserName(newName)
+                            },
                             phone = userPhone,
-                            tripCount = 1,
+                            tripCount = trips.size,
                             onOpenVehicle = { overlay = Overlay.Telemetry },
                             onOpenSettlement = { overlay = Overlay.Settlement },
                             darkMode = darkMode,
@@ -531,8 +554,13 @@ internal fun TravelBuddyMain(
                 androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = Background) {
                     when (current) {
                         Overlay.Profile -> ProfileScreen(
+                            name = currentUserName,
+                            onNameChange = { newName ->
+                                currentUserName = newName
+                                SessionManager.setUserName(newName)
+                            },
                             phone = userPhone,
-                            tripCount = if (activeTrip != null) 1 else 0,
+                            tripCount = trips.size,
                             onOpenVehicle = { overlay = Overlay.Telemetry },
                             onOpenSettlement = { overlay = Overlay.Settlement },
                             darkMode = darkMode,
@@ -617,6 +645,7 @@ private enum class AppTab(
 
 @Composable
 private fun Header(
+    userName: String,
     sosSent: Boolean,
     onSos: () -> Unit
 ) {
@@ -634,13 +663,14 @@ private fun Header(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val initials = getInitials(userName)
             Surface(
                 modifier = Modifier.size(42.dp),
                 shape = RoundedCornerShape(50),
                 color = Color(0xFFBC4E23)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text("PR", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(initials, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
             }
             Spacer(Modifier.width(12.dp))
@@ -652,8 +682,9 @@ private fun Header(
                     color = if (darkMode) Color.White else Navy,
                     maxLines = 1
                 )
+                val greeting = getTimeBasedGreeting()
                 Text(
-                    text = "Good Morning, Prashant! 👋",
+                    text = "$greeting, $userName! 👋",
                     color = Color(0xFF64748B),
                     fontSize = 13.sp,
                     maxLines = 1
@@ -1281,54 +1312,254 @@ private fun TripsScreen(
     onCreate: (CreateTripData) -> Unit
 ) {
     var showCreateTrip by remember { mutableStateOf(false) }
+    var tripPendingDelete by remember { mutableStateOf<Trip?>(null) }
+    val darkMode = LocalTravelBuddyDarkMode.current
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 100.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Your trips",
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Navy,
-                    modifier = Modifier.weight(1f)
-                )
-                Button(onClick = { showCreateTrip = true }) {
-                    Text("+ Create")
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Your Trips",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = tbTextColor()
+                    )
+                    Text(
+                        text = "${trips.size} total trips • Tap to switch active trip",
+                        fontSize = 13.sp,
+                        color = tbSubtextColor()
+                    )
+                }
+                Button(
+                    onClick = { showCreateTrip = true },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                ) {
+                    Text("+ Create", fontWeight = FontWeight.Bold)
                 }
             }
         }
 
         if (trips.isEmpty()) {
-            item { InfoCard("No active trip", "Create a trip to load its live API snapshot.", Orange) }
+            item {
+                InfoCard("No active trips", "Create a trip above to start live tracking, directions, and shared expense splitting.", Orange)
+            }
         } else {
             items(trips) { trip ->
+                val isSelected = trip.id == activeTrip?.id
                 Card(
-                    modifier = Modifier.fillMaxWidth().clickable { onSelect(trip) },
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = tbCardBg())
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(trip) },
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (darkMode) Color(0xFF1E2836) else Color.White
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(
+                        width = if (isSelected) 1.5.dp else 1.dp,
+                        color = if (isSelected) Green else if (darkMode) Color(0xFF2C394B) else Color(0xFFE2E8F0)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 3.dp else 1.dp)
                 ) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(trip.name, fontWeight = FontWeight.Bold, color = tbTextColor(), fontSize = 17.sp)
-                            Text("${trip.source} → ${trip.destination}", color = tbSubtextColor(), fontSize = 13.sp)
-                            Text("${trip.dates} · ${trip.members.size} members", color = tbSubtextColor(), fontSize = 12.sp)
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = (if (isSelected) Green else Blue).copy(alpha = 0.15f),
+                                    modifier = Modifier.size(38.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.DirectionsCar,
+                                            contentDescription = null,
+                                            tint = if (isSelected) Green else Blue,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = trip.name,
+                                        fontWeight = FontWeight.Bold,
+                                        color = tbTextColor(),
+                                        fontSize = 17.sp
+                                    )
+                                    Text(
+                                        text = if (isSelected) "Active Tracking Trip" else trip.status.name.lowercase().replaceFirstChar { it.uppercase() },
+                                        fontSize = 12.sp,
+                                        color = if (isSelected) Green else tbSubtextColor(),
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                }
+                            }
+
+                            if (isSelected) {
+                                Surface(
+                                    shape = RoundedCornerShape(20.dp),
+                                    color = Green.copy(alpha = 0.15f)
+                                ) {
+                                    Text(
+                                        text = "Selected",
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                        color = Green,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(Modifier.width(6.dp))
+                            }
+
+                            // Modern Delete Icon Button
+                            IconButton(
+                                onClick = { tripPendingDelete = trip },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (darkMode) Color(0xFF381A22) else Color(0xFFFEE2E2),
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Delete,
+                                            contentDescription = "Delete Trip",
+                                            tint = Red,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
-                        Surface(shape = RoundedCornerShape(50), color = if (trip.id == activeTrip?.id) Green else Soft) {
-                            Text(if (trip.id == activeTrip?.id) "Selected" else trip.status.name.lowercase(), modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), color = if (trip.id == activeTrip?.id) Color.White else Blue, fontSize = 11.sp)
+
+                        Spacer(Modifier.height(12.dp))
+
+                        // Route banner
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (darkMode) Color(0xFF151D28) else Color(0xFFF8FAFC))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(Green)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = trip.source,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = tbTextColor()
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "→",
+                                fontSize = 13.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(Red)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = trip.destination,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = tbTextColor(),
+                                modifier = Modifier.weight(1f)
+                            )
                         }
-                        Spacer(Modifier.width(6.dp))
-                        Text("×", modifier = Modifier.clickable { onDelete(trip) }.padding(8.dp), color = Red, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // Bottom info: dates & members
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Sensors,
+                                    contentDescription = null,
+                                    tint = tbSubtextColor(),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = trip.dates,
+                                    fontSize = 12.sp,
+                                    color = tbSubtextColor()
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Group,
+                                    contentDescription = null,
+                                    tint = tbSubtextColor(),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "${trip.members.size} member${if (trip.members.size > 1) "s" else ""}",
+                                    fontSize = 12.sp,
+                                    color = tbSubtextColor(),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+
+    tripPendingDelete?.let { trip ->
+        AlertDialog(
+            onDismissRequest = { tripPendingDelete = null },
+            title = { Text("Delete Trip?", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to delete '${trip.name}'? This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDelete(trip)
+                        tripPendingDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Red)
+                ) {
+                    Text("Delete", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { tripPendingDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     if (showCreateTrip) {
@@ -3562,6 +3793,7 @@ private fun AddExpenseDialog(
 @Composable
 private fun MoreScreen(
     vehicle: Vehicle,
+    userName: String = SessionManager.getUserName().ifBlank { "Traveler" },
     onOpenProfile: () -> Unit,
     onOpenSettlement: () -> Unit,
     onOpenTelemetry: () -> Unit,
@@ -3673,7 +3905,7 @@ private fun MoreScreen(
 
             InfoCard(
                 title = "Profile",
-                body = "Prashant",
+                body = userName,
                 accent = Color.Gray
             )
         }
@@ -3684,7 +3916,7 @@ private fun MoreScreen(
             InfoCard(
                 title = "Trip team",
                 body =
-                    "Prashant · Netra · Karuna · Divakar · Karthik · Akshata · Mohan",
+                    "$userName · Netra · Karuna · Divakar · Karthik · Akshata · Mohan",
                 accent = Green
             )
         }
@@ -3981,8 +4213,8 @@ private fun sampleMembers(): List<TripMember> {
     return listOf(
 
         TripMember(
-            id = "prashant",
-            name = "Prashant",
+            id = "me",
+            name = "Traveler",
             color = 0xFF2F80ED,
             isSharingLocation = true
         ),
