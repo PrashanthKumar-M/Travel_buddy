@@ -134,8 +134,16 @@ fun LiveGoogleMapView(
         )
     )
 
+    // Dynamic Geographic Coordinate Resolution based on real city names
+    val (resolvedSrcLat, resolvedSrcLng) = remember(sourceName, sourceLat, sourceLng) {
+        LocationCoordinateResolver.resolveCoordinates(sourceName, sourceLat, sourceLng)
+    }
+    val (resolvedDstLat, resolvedDstLng) = remember(destinationName, destinationLat, destinationLng) {
+        LocationCoordinateResolver.resolveCoordinates(destinationName, destinationLat, destinationLng)
+    }
+
     // Only include real trip targets (no fake clutter in Live Users mode)
-    val targets = remember(sourceName, destinationName, members, vehicle, childBagDevice, isLiveUsersMode) {
+    val targets = remember(sourceName, destinationName, members, vehicle, childBagDevice, isLiveUsersMode, resolvedSrcLat, resolvedDstLat) {
         val list = mutableListOf<MapTarget>()
 
         // 1. Origin (Starting Point)
@@ -144,8 +152,8 @@ fun LiveGoogleMapView(
                 id = "origin-point",
                 title = sourceName,
                 subtitle = "Starting Point",
-                latitude = sourceLat,
-                longitude = sourceLng,
+                latitude = resolvedSrcLat,
+                longitude = resolvedSrcLng,
                 color = 0xFF1D64F2L,
                 type = "SOURCE"
             )
@@ -157,8 +165,8 @@ fun LiveGoogleMapView(
                 id = "dest-point",
                 title = destinationName,
                 subtitle = "Destination",
-                latitude = destinationLat,
-                longitude = destinationLng,
+                latitude = resolvedDstLat,
+                longitude = resolvedDstLng,
                 color = 0xFFEA4335L,
                 type = "DESTINATION"
             )
@@ -594,8 +602,13 @@ fun LiveGoogleMapView(
                 }
             }
 
-            // Top-left: Google Maps Route Banner & Distance/ETA
-            val totalDistance = haversineDistanceKm(sourceLat, sourceLng, destinationLat, destinationLng)
+            // Top-left: Google Maps Route Banner & Distance/ETA (Dynamic real-world calculation)
+            val totalDistance = remember(sourceName, destinationName, resolvedSrcLat, resolvedDstLat) {
+                LocationCoordinateResolver.calculateRoadDistanceKm(sourceName, destinationName)
+            }
+            val drivingEta = remember(totalDistance) {
+                LocationCoordinateResolver.calculateDrivingEta(totalDistance)
+            }
             Surface(
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -614,7 +627,7 @@ fun LiveGoogleMapView(
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = "Google Maps Route • ${formatDistance(totalDistance)} (${formatEta(totalDistance)})",
+                            text = "Google Maps Route • ${formatDistance(totalDistance)} ($drivingEta)",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (darkMode) Color.White else Color(0xFF1E293B)

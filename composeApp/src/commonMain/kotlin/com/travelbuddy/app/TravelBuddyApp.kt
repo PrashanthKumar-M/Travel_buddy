@@ -58,6 +58,7 @@ import com.travelbuddy.app.domain.Trip
 import com.travelbuddy.app.domain.TripMember
 import com.travelbuddy.app.domain.TripStatus
 import com.travelbuddy.app.domain.Vehicle
+import kotlin.math.roundToInt
 import com.travelbuddy.app.data.AddExpenseRequest
 import com.travelbuddy.app.data.CreateTripRequest
 import com.travelbuddy.app.data.KtorTravelRepository
@@ -396,6 +397,7 @@ internal fun TravelBuddyMain(
                             activeTrip = activeTrip,
                             trips = trips,
                             availableMembers = members,
+                            currentUserName = currentUserName,
                             pendingCoverImageUri = pendingCoverImageUri,
                             onPickTripCoverImage = onPickTripCoverImage,
                             onSelect = { trip ->
@@ -415,7 +417,11 @@ internal fun TravelBuddyMain(
                                 }
                             },
                             onCreate = { draft ->
-                                val tripMembers = members.filter { it.id in draft.memberIds }.ifEmpty { members.take(1) }
+                                val tripMembers = if (draft.dynamicMembers.isNotEmpty()) {
+                                    draft.dynamicMembers
+                                } else {
+                                    listOf(TripMember("usr-${currentUserName.hashCode()}", currentUserName.ifBlank { "You" }, 0xFF1D64F2L, true))
+                                }
                                 val dynamicId = draft.id.ifBlank { "trip-" + (100000..999999).random() }
                                 if (!config.useRemoteApi) {
                                     val localTrip = Trip(
@@ -453,15 +459,16 @@ internal fun TravelBuddyMain(
                                         source = draft.source,
                                         destination = draft.destination,
                                         dates = draft.rideDate.ifBlank { "Planned" },
-                                        createdBy = "usr-1",
+                                        createdBy = "usr-${currentUserName.hashCode()}",
                                         coverImage = draft.coverImage,
-                                        members = draft.memberIds.toList()
+                                        members = tripMembers.map { it.name }
                                     )
                                     repository.createTrip(request)
                                         .onSuccess { trip ->
-                                            activeTrip = trip
-                                            trips = trips + trip
-                                            members = trip.members
+                                            val finalTrip = if (trip.members.isEmpty()) trip.copy(members = tripMembers) else trip
+                                            activeTrip = finalTrip
+                                            trips = trips + finalTrip
+                                            members = finalTrip.members
                                             activeTripCover = draft.coverImage ?: trip.coverImage
                                             draft.coverImage?.let { tripCovers = tripCovers + (trip.id to it) }
                                             selectedTab = AppTab.Home
@@ -1370,7 +1377,8 @@ private fun InfoCard(
 private fun TripsScreen(
     activeTrip: Trip?,
     trips: List<Trip>,
-    availableMembers: List<TripMember>,
+    availableMembers: List<TripMember> = emptyList(),
+    currentUserName: String = "",
     pendingCoverImageUri: String?,
     onPickTripCoverImage: (() -> Unit)?,
     onSelect: (Trip) -> Unit,
@@ -1762,7 +1770,7 @@ private fun TripsScreen(
 
     if (showCreateTrip) {
         CreateTripDialog(
-            availableMembers = availableMembers,
+            currentUserName = currentUserName,
             pendingCoverImageUri = pendingCoverImageUri,
             onPickTripCoverImage = onPickTripCoverImage,
             onDismiss = { showCreateTrip = false },
@@ -1776,7 +1784,7 @@ private fun TripsScreen(
 
 @Composable
 private fun CreateTripDialog(
-    availableMembers: List<TripMember>,
+    currentUserName: String = "",
     pendingCoverImageUri: String?,
     onPickTripCoverImage: (() -> Unit)?,
     onDismiss: () -> Unit,
@@ -1793,7 +1801,20 @@ private fun CreateTripDialog(
     var multiDay by remember { mutableStateOf(false) }
     var rideType by remember { mutableStateOf(RideType.OPEN_TO_ALL) }
     var notes by remember { mutableStateOf("") }
-    var selectedMemberIds by remember { mutableStateOf(availableMembers.map { it.id }.toSet()) }
+    val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "You" } }
+    var tripMembers by remember {
+        mutableStateOf(
+            listOf(
+                TripMember(
+                    id = "usr-${myName.hashCode()}",
+                    name = myName,
+                    color = 0xFF1D64F2L,
+                    isSharingLocation = true
+                )
+            )
+        )
+    }
+    var newMemberInput by remember { mutableStateOf("") }
     var vehicleDetails by remember { mutableStateOf("") }
     var coverImage by remember { mutableStateOf(pendingCoverImageUri.orEmpty()) }
     var picker by remember { mutableStateOf<String?>(null) }
@@ -1959,23 +1980,85 @@ private fun CreateTripDialog(
                     }
                 }
                 item {
-                    Text("Trip Members (${selectedMemberIds.size})", fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Trip Members (${tripMembers.size})", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text("Dynamic", fontSize = 11.sp, color = Green, fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(Modifier.height(4.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        availableMembers.forEach { member ->
-                            val selected = member.id in selectedMemberIds
+                        tripMembers.forEachIndexed { idx, member ->
                             Surface(
-                                modifier = Modifier.fillMaxWidth().clickable {
-                                    selectedMemberIds = if (selected) selectedMemberIds - member.id else selectedMemberIds + member.id
-                                },
+                                modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp),
-                                color = if (selected) Soft else Color.White
+                                color = Soft,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
                             ) {
                                 Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(if (selected) "✓" else "+", color = if (selected) Green else Color.Gray, fontWeight = FontWeight.Bold)
+                                    Box(
+                                        modifier = Modifier.size(24.dp).clip(CircleShape).background(Color(member.color)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(member.name.take(1).uppercase(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
                                     Spacer(Modifier.width(10.dp))
-                                    Text(member.name, modifier = Modifier.weight(1f), color = Navy)
-                                    Text(if (selected) "Added" else "Add", color = if (selected) Green else Blue, fontSize = 12.sp)
+                                    Text(
+                                        if (idx == 0) "${member.name} (Organizer/You)" else member.name,
+                                        modifier = Modifier.weight(1f),
+                                        color = Navy,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    if (idx > 0) {
+                                        IconButton(
+                                            onClick = {
+                                                tripMembers = tripMembers.filterIndexed { i, _ -> i != idx }
+                                            },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(Icons.Default.Close, contentDescription = "Remove", tint = Red, modifier = Modifier.size(16.dp))
+                                        }
+                                    } else {
+                                        Text("Organizer", color = Green, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
                                 }
+                            }
+                        }
+
+                        // Input to add co-travelers dynamically
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = newMemberInput,
+                                onValueChange = { newMemberInput = it },
+                                placeholder = { Text("Add co-traveler name", fontSize = 12.sp) },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true
+                            )
+                            Button(
+                                onClick = {
+                                    val cleanName = newMemberInput.trim()
+                                    if (cleanName.isNotBlank()) {
+                                        val colors = listOf(0xFF27AE60L, 0xFFF2994AL, 0xFF9B51E0L, 0xFFEB5757L)
+                                        val newMem = TripMember(
+                                            id = "usr-${cleanName.hashCode()}",
+                                            name = cleanName,
+                                            color = colors[tripMembers.size % colors.size],
+                                            isSharingLocation = true
+                                        )
+                                        tripMembers = tripMembers + newMem
+                                        newMemberInput = ""
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Blue),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                            ) {
+                                Text("+ Add", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     }
@@ -2087,7 +2170,7 @@ private fun CreateTripDialog(
                     onCreated(
                         CreateTripData(
                             id = generatedTripId,
-                            source = source,
+                            source = source.ifBlank { "Bengaluru" },
                             destination = destination,
                             title = title,
                             rideDate = "$startDate - $endDate",
@@ -2096,7 +2179,8 @@ private fun CreateTripDialog(
                             multiDay = multiDay,
                             rideType = rideType,
                             notes = notes,
-                            memberIds = selectedMemberIds,
+                            memberIds = tripMembers.map { it.id }.toSet(),
+                            dynamicMembers = tripMembers,
                             vehicleDetails = vehicleDetails.takeIf { it.isNotBlank() },
                             coverImage = coverImage.takeIf { it.isNotBlank() },
                             reminderEnabled = reminderEnabled
@@ -2293,6 +2377,12 @@ private fun TrackingScreen(
             trackingCode = activeTrip.id
         }
         activeBuddies = members
+    }
+
+    val srcName = activeTrip?.source?.ifBlank { "Starting Point" } ?: "Starting Point"
+    val dstName = activeTrip?.destination?.ifBlank { "Destination" } ?: "Destination"
+    val totalRouteKm = remember(srcName, dstName) {
+        LocationCoordinateResolver.calculateRoadDistanceKm(srcName, dstName)
     }
 
     // State for child school bag / personal tag device
@@ -2543,16 +2633,14 @@ private fun TrackingScreen(
                             }
                         }
                     } else {
-                        val srcName = activeTrip?.source?.ifBlank { "Starting Point" } ?: "Starting Point"
-                        val dstName = activeTrip?.destination?.ifBlank { "Destination" } ?: "Destination"
                         val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "You" } }
 
                         itemsIndexed(activeBuddies) { index, buddy ->
                             val isMe = buddy.name.equals(myName, ignoreCase = true) || (index == 0 && activeBuddies.none { it.name.equals(myName, ignoreCase = true) })
                             
                             val distBetweenKm = if (isMe) 0.0 else (1.4 + index * 1.8)
-                            val distFromSourceKm = 24.5 + if (isMe) 0.0 else distBetweenKm
-                            val distToDestKm = (220.5 - distFromSourceKm).coerceAtLeast(0.5)
+                            val distFromSourceKm = ((totalRouteKm * 0.08 + if (isMe) 0.0 else distBetweenKm) * 10.0).roundToInt() / 10.0
+                            val distToDestKm = (totalRouteKm - distFromSourceKm).coerceAtLeast(0.5)
                             val speedKmh = if (isMe) 45.0 else (38.0 + (index * 4))
                             val battery = (96 - index * 5).coerceIn(40, 100)
 
@@ -3636,7 +3724,7 @@ private fun ExpensesScreen(
     }
     var selectedManualGroupIndex by remember { mutableStateOf(0) }
 
-    val currentGroupMembers = if (splitMode == 0) members else manualGroups.getOrNull(selectedManualGroupIndex)?.members ?: members
+    val currentGroupMembers = if (splitMode == 0) members else manualGroups.getOrNull(selectedManualGroupIndex)?.members ?: emptyList()
     val currentExpenses = if (splitMode == 0) expenses else manualGroups.getOrNull(selectedManualGroupIndex)?.expenses ?: emptyList()
     val groupTitle = if (splitMode == 0) tripName else manualGroups.getOrNull(selectedManualGroupIndex)?.name ?: "Personal Group"
 
@@ -3689,42 +3777,75 @@ private fun ExpensesScreen(
             }
         }
 
-        // Manual Group Switcher & Add Group Button
-        if (splitMode == 1) {
+        if (splitMode == 1 && manualGroups.isEmpty()) {
+            // Single, clean create new group empty card (only ONE create button, zero trip data clutter)
             item {
-                Row(
+                Card(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0)
+                    )
                 ) {
-                    Text("Select Personal Group:", fontSize = 12.sp, color = tbSubtextColor())
-                    TextButton(onClick = { showCreateGroupDialog = true }) {
-                        Text("+ New Group", fontWeight = FontWeight.Bold)
-                    }
-                }
-                if (manualGroups.isEmpty()) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color(0xFFF1F5F9))
+                    Column(
+                        modifier = Modifier.padding(28.dp).fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                        Surface(
+                            shape = CircleShape,
+                            color = Blue.copy(alpha = 0.12f),
+                            modifier = Modifier.size(56.dp)
                         ) {
-                            Text("No personal split groups yet", fontWeight = FontWeight.Bold, color = tbTextColor())
-                            Spacer(Modifier.height(4.dp))
-                            Text("Create a group to split bills for dinners, rent, or weekend plans.", fontSize = 12.sp, color = tbSubtextColor())
-                            Spacer(Modifier.height(8.dp))
-                            Button(
-                                onClick = { showCreateGroupDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = Blue)
-                            ) {
-                                Text("+ Create New Group")
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.AccountBalanceWallet,
+                                    contentDescription = null,
+                                    tint = Blue,
+                                    modifier = Modifier.size(28.dp)
+                                )
                             }
                         }
+                        Text("No Personal Split Groups Yet", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = tbTextColor())
+                        Text(
+                            "Create a custom group to split bills for dinners, flatmates, or room rent. You can add your own members dynamically.",
+                            fontSize = 13.sp,
+                            color = tbSubtextColor(),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            lineHeight = 18.sp
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Button(
+                            onClick = { showCreateGroupDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Blue),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)
+                        ) {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Create New Group", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
                     }
-                } else {
+                }
+            }
+        } else {
+            // Active group exists (or Trip Split mode)
+            if (splitMode == 1) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Select Personal Group:", fontSize = 12.sp, color = tbSubtextColor())
+                        TextButton(onClick = { showCreateGroupDialog = true }) {
+                            Text("+ New Group", fontWeight = FontWeight.Bold, color = Blue)
+                        }
+                    }
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(manualGroups.indices.toList()) { idx ->
                             val grp = manualGroups[idx]
@@ -3747,28 +3868,27 @@ private fun ExpensesScreen(
                     }
                 }
             }
-        }
 
-        // Header + Add Button
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        if (splitMode == 0) "Trip Expense Split" else "Personal Split",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = tbTextColor()
-                    )
-                    Text(groupTitle, fontSize = 13.sp, color = tbSubtextColor())
-                }
-                Button(
-                    onClick = { showAddExpense = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Blue)
-                ) {
-                    Text("+ Add Bill")
+            // Header + Add Button
+            item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            if (splitMode == 0) "Trip Expense Split" else "Personal Split",
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = tbTextColor()
+                        )
+                        Text(groupTitle, fontSize = 13.sp, color = tbSubtextColor())
+                    }
+                    Button(
+                        onClick = { showAddExpense = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                    ) {
+                        Text("+ Add Bill")
+                    }
                 }
             }
-        }
 
         // Settlement Toast feedback
         settleToastMessage?.let { msg ->
@@ -3878,6 +3998,7 @@ private fun ExpensesScreen(
                     accent = Blue
                 )
             }
+        }
         }
     }
 
@@ -4403,6 +4524,7 @@ private data class CreateTripData(
     val rideType: RideType,
     val notes: String,
     val memberIds: Set<String>,
+    val dynamicMembers: List<TripMember> = emptyList(),
     val vehicleDetails: String?,
     val coverImage: String?,
     val reminderEnabled: Boolean

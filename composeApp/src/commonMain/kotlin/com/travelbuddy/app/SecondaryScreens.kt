@@ -219,7 +219,6 @@ internal fun ProfileScreen(
             .fillMaxSize()
             .background(if (darkMode) Color(0xFF10151C) else Tb.Page)
             .verticalScroll(scrollState)
-            .padding(bottom = 120.dp)
     ) {
         // Compact modern header bar
         Surface(
@@ -231,10 +230,10 @@ internal fun ProfileScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onClose, modifier = Modifier.size(40.dp)) {
+                IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back",
@@ -246,7 +245,7 @@ internal fun ProfileScreen(
                     "My Profile",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 19.sp
+                    fontSize = 18.sp
                 )
             }
         }
@@ -254,29 +253,29 @@ internal fun ProfileScreen(
         Column(
             Modifier
                 .padding(horizontal = 16.dp)
-                .padding(top = 16.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .padding(top = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Avatar(localName, Color(0xFFBC4E23), 64)
-                Spacer(Modifier.width(14.dp))
+                Avatar(localName, Color(0xFFBC4E23), 56)
+                Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(localName, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = primaryText)
+                    Text(localName, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = primaryText)
                     Spacer(Modifier.height(2.dp))
-                    Text(phone, fontSize = 13.sp, color = secondaryText)
-                    Spacer(Modifier.height(4.dp))
+                    Text(phone, fontSize = 12.sp, color = secondaryText)
+                    Spacer(Modifier.height(3.dp))
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = Tb.Green.copy(alpha = 0.15f)
                     ) {
                         Text(
                             "Verified Traveler",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                             color = Tb.Green,
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -300,7 +299,7 @@ internal fun ProfileScreen(
                         Modifier
                             .fillMaxWidth()
                             .clickable(onClick = onToggleDarkMode)
-                            .padding(vertical = 12.dp),
+                            .padding(vertical = 10.dp, horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("Dark mode", Modifier.weight(1f), color = primaryText)
@@ -311,14 +310,12 @@ internal fun ProfileScreen(
                 }
             }
 
-            Spacer(Modifier.height(4.dp))
-
-            // Prominent, Well-Assigned Logout Button
+            // Prominent, Well-Assigned Logout Button with plenty of padding
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = { showLogoutConfirm = true }),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(14.dp),
                 color = if (darkMode) Color(0xFF3B151E) else Color(0xFFFEF2F2),
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
@@ -327,7 +324,7 @@ internal fun ProfileScreen(
                 shadowElevation = 1.dp
             ) {
                 Row(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(vertical = 13.dp, horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
@@ -335,27 +332,30 @@ internal fun ProfileScreen(
                         imageVector = Icons.AutoMirrored.Filled.Logout,
                         contentDescription = "Logout",
                         tint = Tb.Red,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
-                    Spacer(Modifier.width(10.dp))
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         text = "Log Out of Travel Buddy",
                         color = Tb.Red,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
+                        fontSize = 15.sp
                     )
                 }
             }
 
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TravelBuddyLogo(size = 20.dp)
+                TravelBuddyLogo(size = 18.dp)
                 Spacer(Modifier.size(8.dp))
-                Text("Travel Buddy v0.1.0 • Ready for Play Store", color = secondaryText, fontSize = 12.sp)
+                Text("Travel Buddy v0.1.0 • Ready for Play Store", color = secondaryText, fontSize = 11.sp)
             }
+
+            // Generous clearance space so the logout button is 100% above any bottom navigation bar
+            Spacer(Modifier.height(140.dp))
         }
     }
 

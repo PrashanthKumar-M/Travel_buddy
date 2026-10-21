@@ -47,26 +47,20 @@ public class TravelBuddyStateService {
 
     private void seedInitialData() {
         // Seed standard users and profiles
-        User u1 = new User("usr-1", "+91 98765 43210", "Prashant Kumar", "https://images.unsplash.com/photo-1534528741775-53994a69daeb", System.currentTimeMillis());
-        User u2 = new User("usr-2", "+91 98765 11111", "Aarav Sharma", null, System.currentTimeMillis());
-        User u3 = new User("usr-3", "+91 98765 22222", "Rhea Nair", null, System.currentTimeMillis());
-        User u4 = new User("usr-4", "+91 98765 33333", "Kabir Sen", null, System.currentTimeMillis());
+        User u1 = new User("usr-1", "+91 99945 26855", "Traveler", "https://images.unsplash.com/photo-1534528741775-53994a69daeb", System.currentTimeMillis());
         users.put(u1.id(), u1);
-        users.put(u2.id(), u2);
-        users.put(u3.id(), u3);
-        users.put(u4.id(), u4);
 
         UserProfile p1 = new UserProfile(
                 "usr-1",
-                "+91 98765 43210",
-                "Prashant Kumar",
-                "prashant@travelbuddy.app",
+                "+91 99945 26855",
+                "Traveler",
+                "user@travelbuddy.app",
                 "https://images.unsplash.com/photo-1534528741775-53994a69daeb",
-                "Dad (Emergency)",
+                "Family (Emergency)",
                 "+91 98765 99999",
-                12,
-                3480.5,
-                14250.0,
+                1,
+                0.0,
+                0.0,
                 System.currentTimeMillis() - 864000000L
         );
         userProfiles.put("usr-1", p1);
