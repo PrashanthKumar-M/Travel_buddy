@@ -112,7 +112,44 @@ public class EmailService {
         log.info("Sending OTP verification to email: {} (using account: '{}', host: '{}:{}')",
                 cleanEmail, username.isBlank() ? "NOT_SET" : username, host, port);
 
+        // 0. Try Brevo HTTPS API first (free 300 emails/day). Render's free tier blocks
+        //    outbound SMTP ports 25/465/587, so an HTTPS API is the reliable option there.
+        //    Env: BREVO_API_KEY (required), BREVO_SENDER_EMAIL (a verified sender, e.g. your Gmail).
+        String brevoKey = System.getenv("BREVO_API_KEY");
+        if (brevoKey != null && !brevoKey.isBlank()) {
+            String senderEnv = System.getenv("BREVO_SENDER_EMAIL");
+            String sender = (senderEnv != null && !senderEnv.isBlank()) ? senderEnv.trim() : username;
+            if (sender.isBlank()) {
+                log.warn("BREVO_API_KEY is set but BREVO_SENDER_EMAIL / SPRING_MAIL_USERNAME is empty; skipping Brevo");
+            } else {
+                try {
+                    String jsonBody = String.format(
+                            "{\"sender\":{\"name\":\"Travel Buddy\",\"email\":\"%s\"},\"to\":[{\"email\":\"%s\"}],"
+                                    + "\"subject\":\"Travel Buddy Verification Code: %s\","
+                                    + "\"htmlContent\":\"<div style='font-family:sans-serif;max-width:500px;margin:auto;padding:24px;border:1px solid #e2e8f0;border-radius:12px;'><h2 style='color:#0A5C67;'>Travel Buddy</h2><p>Your verification code is:</p><h1 style='color:#1D64F2;letter-spacing:4px;'>%s</h1><p style='color:#64748B;'>Valid for 10 minutes. Do not share this code.</p></div>\"}",
+                            sender, cleanEmail, otp, otp
+                    );
+                    HttpRequest request = HttpRequest.newBuilder()
+                            .uri(URI.create("https://api.brevo.com/v3/smtp/email"))
+                            .header("api-key", brevoKey.trim())
+                            .header("Content-Type", "application/json")
+                            .header("Accept", "application/json")
+                            .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                            .timeout(Duration.ofSeconds(10))
+                            .build();
+                    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                    log.info("Brevo HTTP response: {} body: {}", response.statusCode(), response.body());
+                    if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                        return true;
+                    }
+                } catch (Exception e) {
+                    log.error("Failed to send email via Brevo: {}", e.getMessage());
+                }
+            }
+        }
+
         // 1. Try JavaMailSender if configured with SMTP / Gmail App Password
+        //    (works locally / on paid hosts; times out on Render free tier)
         if (!username.isBlank() && !password.isBlank()) {
             try {
                 JavaMailSender sender = getOrCreateMailSender(username, password, host, port);
@@ -160,8 +197,9 @@ public class EmailService {
             }
         }
 
-        // Fallback: log to console
-        log.info("[EMAIL SERVICE] Dispatched OTP '{}' to email: {}", otp, cleanEmail);
-        return true;
+        // Fallback: nothing delivered - log to console so the failure is visible
+        log.error("[EMAIL SERVICE] OTP email NOT delivered to {} (all providers failed or unconfigured). OTP='{}'",
+                cleanEmail, otp);
+        return false;
     }
 }
