@@ -71,12 +71,8 @@ public class TravelBuddyStateService {
         );
         userProfiles.put("usr-1", p1);
 
-        // Seed initial Trip
+        // Seed initial Trip template
         List<TripMember> members = new ArrayList<>();
-        members.add(new TripMember("usr-1", "Prashant", 0xFF2F80EDL, true, 12.9716, 77.5946, 42.0, 94, System.currentTimeMillis()));
-        members.add(new TripMember("usr-2", "Aarav", 0xFF27AE60L, true, 12.9730, 77.5970, 38.0, 82, System.currentTimeMillis()));
-        members.add(new TripMember("usr-3", "Rhea", 0xFFF2994AL, true, 12.9690, 77.5920, 45.0, 76, System.currentTimeMillis()));
-        members.add(new TripMember("usr-4", "Kabir", 0xFF9B51E0L, true, 12.9750, 77.6010, 40.0, 68, System.currentTimeMillis()));
 
         String tripId = "trip-coorg-expedition";
         String tripCode = "TRIP-7489";

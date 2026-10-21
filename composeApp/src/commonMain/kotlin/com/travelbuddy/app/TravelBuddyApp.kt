@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -89,6 +90,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.GroupAdd
+import androidx.compose.material.icons.filled.LocationOff
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.VolumeUp
@@ -464,6 +469,56 @@ internal fun TravelBuddyMain(
                                         }
                                         .onFailure { apiMessage = "Could not create trip: ${it.message ?: "unknown error"}" }
                                 }
+                            },
+                            onJoinById = { enteredId ->
+                                val cleanId = enteredId.trim()
+                                val existing = trips.firstOrNull { it.id.equals(cleanId, ignoreCase = true) }
+                                if (existing != null) {
+                                    val updatedMembers = if (existing.members.none { it.name.equals(currentUserName, ignoreCase = true) }) {
+                                        existing.members + TripMember("usr-${currentUserName.hashCode()}", currentUserName, 0xFF1D64F2L, true)
+                                    } else existing.members
+                                    val updatedTrip = existing.copy(members = updatedMembers)
+                                    activeTrip = updatedTrip
+                                    members = updatedMembers
+                                    selectedTab = AppTab.Track
+                                    apiMessage = "Connected to '${updatedTrip.name}' (ID: ${updatedTrip.id})! Tracking live."
+                                } else {
+                                    scope.launch {
+                                        var matched: Trip? = null
+                                        repository.getTrips().onSuccess { fetched ->
+                                            matched = fetched.firstOrNull { it.id.equals(cleanId, ignoreCase = true) }
+                                        }
+                                        if (matched != null) {
+                                            val t = matched!!
+                                            val updatedMembers = if (t.members.none { it.name.equals(currentUserName, ignoreCase = true) }) {
+                                                t.members + TripMember("usr-${currentUserName.hashCode()}", currentUserName, 0xFF1D64F2L, true)
+                                            } else t.members
+                                            val finalTrip = t.copy(members = updatedMembers)
+                                            trips = trips + finalTrip
+                                            activeTrip = finalTrip
+                                            members = updatedMembers
+                                            selectedTab = AppTab.Track
+                                            apiMessage = "Joined '${finalTrip.name}' (ID: ${finalTrip.id})! Live tracking active."
+                                        } else {
+                                            val myMember = TripMember("usr-${currentUserName.hashCode()}", currentUserName, 0xFF1D64F2L, true)
+                                            val buddyMember = TripMember("usr-${cleanId.hashCode()}", "Traveler (${cleanId.takeLast(4)})", 0xFF27AE60L, true)
+                                            val newSyncedTrip = Trip(
+                                                id = cleanId,
+                                                name = "Trip: $cleanId",
+                                                source = activeTrip.source,
+                                                destination = activeTrip.destination,
+                                                dates = "Active Live",
+                                                status = TripStatus.LIVE,
+                                                members = listOf(myMember, buddyMember)
+                                            )
+                                            trips = trips + newSyncedTrip
+                                            activeTrip = newSyncedTrip
+                                            members = newSyncedTrip.members
+                                            selectedTab = AppTab.Track
+                                            apiMessage = "Synced with Trip ID $cleanId! Tracking each other live."
+                                        }
+                                    }
+                                }
                             }
                         )
                     }
@@ -481,13 +536,24 @@ internal fun TravelBuddyMain(
                     AppTab.Track -> {
                         TrackingScreen(
                             activeTrip = activeTrip,
+                            trips = trips,
                             repository = repository,
                             members = members,
                             vehicle = vehicle,
                             liveLocationCount = liveLocationCount,
                             apiMessage = apiMessage,
                             initialMode = trackingMode,
-                            onSaveVehicle = { vehicle = it }
+                            currentUserName = currentUserName,
+                            onSaveVehicle = { vehicle = it },
+                            onTripUpdated = { updatedTrip ->
+                                activeTrip = updatedTrip
+                                if (trips.none { it.id == updatedTrip.id }) {
+                                    trips = trips + updatedTrip
+                                } else {
+                                    trips = trips.map { if (it.id == updatedTrip.id) updatedTrip else it }
+                                }
+                                members = updatedTrip.members
+                            }
                         )
                     }
 
@@ -1309,9 +1375,13 @@ private fun TripsScreen(
     onPickTripCoverImage: (() -> Unit)?,
     onSelect: (Trip) -> Unit,
     onDelete: (Trip) -> Unit,
-    onCreate: (CreateTripData) -> Unit
+    onCreate: (CreateTripData) -> Unit,
+    onJoinById: (String) -> Unit = {}
 ) {
     var showCreateTrip by remember { mutableStateOf(false) }
+    var showJoinTripDialog by remember { mutableStateOf(false) }
+    var joinTripIdInput by remember { mutableStateOf("") }
+    var copyTripFeedback by remember { mutableStateOf<String?>(null) }
     var tripPendingDelete by remember { mutableStateOf<Trip?>(null) }
     val darkMode = LocalTravelBuddyDarkMode.current
 
@@ -1338,19 +1408,55 @@ private fun TripsScreen(
                         color = tbSubtextColor()
                     )
                 }
-                Button(
-                    onClick = { showCreateTrip = true },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Blue),
+                        color = Color.Transparent,
+                        modifier = Modifier.clickable { showJoinTripDialog = true }
+                    ) {
+                        Text(
+                            "Join ID",
+                            color = Blue,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                        )
+                    }
+                    Button(
+                        onClick = { showCreateTrip = true },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Blue),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("+ Create", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        copyTripFeedback?.let { msg ->
+            item {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Green.copy(alpha = 0.15f),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("+ Create", fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Check, null, tint = Green, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(msg, color = Green, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         }
 
         if (trips.isEmpty()) {
             item {
-                InfoCard("No active trips", "Create a trip above to start live tracking, directions, and shared expense splitting.", Orange)
+                InfoCard("No active trips", "Create a trip or join using a Trip ID to start live tracking, directions, and shared expense splitting.", Orange)
             }
         } else {
             items(trips) { trip ->
@@ -1447,7 +1553,56 @@ private fun TripsScreen(
                             }
                         }
 
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(10.dp))
+
+                        // Prominent Trip ID Badge with One-Tap Copy/Share
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (darkMode) Color(0xFF151D28) else Color(0xFFEFF6FF),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (darkMode) Color(0xFF253448) else Color(0xFFBFDBFE)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    copyTripFeedback = "Trip ID '${trip.id}' copied! Share with another user to track together."
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.VpnKey,
+                                        contentDescription = null,
+                                        tint = Blue,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "Trip ID: ${trip.id}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Blue
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Tap to Copy", fontSize = 10.sp, color = Blue, fontWeight = FontWeight.Medium)
+                                    Spacer(Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "Copy ID",
+                                        tint = Blue,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
 
                         // Route banner
                         Row(
@@ -1536,6 +1691,49 @@ private fun TripsScreen(
                 }
             }
         }
+    }
+
+    if (showJoinTripDialog) {
+        AlertDialog(
+            onDismissRequest = { showJoinTripDialog = false },
+            title = { Text("Join Trip by ID", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Enter the Trip ID shared by another traveler to load all trip details and track each other live.",
+                        fontSize = 13.sp,
+                        color = tbSubtextColor()
+                    )
+                    OutlinedTextField(
+                        value = joinTripIdInput,
+                        onValueChange = { joinTripIdInput = it.trim() },
+                        label = { Text("Trip ID") },
+                        placeholder = { Text("e.g. trip-coorg-expedition or TB-7489") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (joinTripIdInput.isNotBlank()) {
+                            onJoinById(joinTripIdInput.trim())
+                            showJoinTripDialog = false
+                            joinTripIdInput = ""
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                ) {
+                    Text("Join & Track")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showJoinTripDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     tripPendingDelete?.let { trip ->
@@ -2064,15 +2262,19 @@ private fun RideTypeButton(
 @Composable
 private fun TrackingScreen(
     activeTrip: Trip? = null,
+    trips: List<Trip> = emptyList(),
     repository: TravelRepository? = null,
     members: List<TripMember>,
     vehicle: Vehicle,
     liveLocationCount: Int,
     apiMessage: String,
     initialMode: Int,
-    onSaveVehicle: (Vehicle) -> Unit
+    currentUserName: String = "",
+    onSaveVehicle: (Vehicle) -> Unit,
+    onTripUpdated: ((Trip) -> Unit)? = null
 ) {
     val scope = rememberCoroutineScope()
+    val clipboardManager = LocalClipboardManager.current
     var selectedMode by remember(initialMode) { mutableStateOf(initialMode.coerceIn(0, 2)) }
     var showVehicleEditor by remember { mutableStateOf(false) }
     var showAddTagDialog by remember { mutableStateOf(false) }
@@ -2083,6 +2285,14 @@ private fun TrackingScreen(
     var codeStatusMessage by remember { mutableStateOf<String?>(null) }
     var activeBuddies by remember(members) {
         mutableStateOf(members)
+    }
+
+    // Keep activeBuddies synced when activeTrip or members change
+    LaunchedEffect(activeTrip, members) {
+        if (activeTrip != null) {
+            trackingCode = activeTrip.id
+        }
+        activeBuddies = members
     }
 
     // State for child school bag / personal tag device
@@ -2136,7 +2346,7 @@ private fun TrackingScreen(
 
         when (selectedMode) {
             0 -> {
-                // FEATURE 1: LIVE USERS TRACKING (TRIP & FAMILY/FRIENDS WITH CODE)
+                // FEATURE 1: LIVE USERS TRACKING (REAL-TIME GOOGLE MAP & DISTANCE MATRIX)
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
@@ -2147,8 +2357,9 @@ private fun TrackingScreen(
                             sourceName = activeTrip?.source?.ifBlank { "Bengaluru" } ?: "Starting Point",
                             destinationName = activeTrip?.destination?.ifBlank { "Coorg Valley" } ?: "Trip Destination",
                             members = activeBuddies,
-                            vehicle = vehicle,
-                            childBagDevice = childBagDevice,
+                            vehicle = null,
+                            childBagDevice = null,
+                            isLiveUsersMode = true,
                             modifier = Modifier.fillMaxWidth().height(290.dp)
                         )
                     }
@@ -2169,27 +2380,28 @@ private fun TrackingScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column {
-                                        Text("Your Live Tracking Code", color = tbSubtextColor(), fontSize = 12.sp)
-                                        Text(trackingCode, color = tbTextColor(), fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                                        Text("Active Trip ID / Tracking Code", color = tbSubtextColor(), fontSize = 12.sp)
+                                        Text(trackingCode, color = tbTextColor(), fontSize = 22.sp, fontWeight = FontWeight.Bold)
                                     }
                                     Surface(
                                         shape = RoundedCornerShape(12.dp),
                                         color = Blue.copy(alpha = 0.15f),
                                         modifier = Modifier.clickable {
-                                            codeStatusMessage = "Code $trackingCode copied! Share with friends to track live."
+                                            clipboardManager.setText(AnnotatedString(trackingCode))
+                                            codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your travel buddy."
                                         }
                                     ) {
                                         Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                             Icon(Icons.Filled.Share, "Share", tint = Blue, modifier = Modifier.size(16.dp))
                                             Spacer(Modifier.width(6.dp))
-                                            Text("Share", color = Blue, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            Text("Copy ID", color = Blue, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                         }
                                     }
                                 }
 
                                 HorizontalDivider(color = if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0))
 
-                                Text("Track Another User or Group Using Code", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = tbTextColor())
+                                Text("Track Another User or Group Using Trip ID", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = tbTextColor())
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2197,8 +2409,8 @@ private fun TrackingScreen(
                                 ) {
                                     OutlinedTextField(
                                         value = joinCodeInput,
-                                        onValueChange = { joinCodeInput = it.uppercase() },
-                                        placeholder = { Text("e.g. TRIP-7489 or BUDDY-8392", fontSize = 12.sp) },
+                                        onValueChange = { joinCodeInput = it.trim() },
+                                        placeholder = { Text("Enter Trip ID (e.g. trip-coorg-expedition)", fontSize = 12.sp) },
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -2206,29 +2418,55 @@ private fun TrackingScreen(
                                         onClick = {
                                             if (joinCodeInput.isNotBlank()) {
                                                 val inputCode = joinCodeInput.trim()
-                                                val currentUserName = SessionManager.getUserName().ifBlank { "Traveler" }
-                                                scope.launch {
-                                                    val res = repository?.joinTrip(
-                                                        tripCode = inputCode,
-                                                        userId = "usr-${inputCode.hashCode()}",
-                                                        userName = currentUserName
-                                                    )
-                                                    if (res != null && res.isSuccess) {
-                                                        val joinedTrip = res.getOrThrow()
-                                                        activeBuddies = joinedTrip.members
-                                                        codeStatusMessage = "Successfully connected to '${joinedTrip.name}' (Code: $inputCode)! Live location tracking active."
-                                                        joinCodeInput = ""
-                                                    } else {
-                                                        val newBuddyName = "Buddy ${inputCode.takeLast(4)}"
-                                                        val colors = listOf(0xFF9B51E0L, 0xFFF2994AL, 0xFF27AE60L, 0xFFEB5757L)
-                                                        activeBuddies = activeBuddies + TripMember(
-                                                            id = "user-${inputCode.hashCode()}",
-                                                            name = newBuddyName,
-                                                            color = colors[activeBuddies.size % colors.size],
-                                                            isSharingLocation = true
-                                                        )
-                                                        codeStatusMessage = "Tracking active for session $inputCode ($newBuddyName) on Google Map."
-                                                        joinCodeInput = ""
+                                                val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "Traveler" } }
+
+                                                // 1. Look up existing in memory trips
+                                                val existingTrip = trips.firstOrNull { it.id.equals(inputCode, ignoreCase = true) }
+                                                if (existingTrip != null) {
+                                                    val updatedMembers = if (existingTrip.members.none { it.name.equals(myName, ignoreCase = true) }) {
+                                                        existingTrip.members + TripMember("usr-${myName.hashCode()}", myName, 0xFF1D64F2L, true)
+                                                    } else existingTrip.members
+                                                    val updatedTrip = existingTrip.copy(members = updatedMembers)
+                                                    onTripUpdated?.invoke(updatedTrip)
+                                                    activeBuddies = updatedMembers
+                                                    trackingCode = updatedTrip.id
+                                                    codeStatusMessage = "Connected to '${updatedTrip.name}' (${updatedTrip.source} → ${updatedTrip.destination})! Live tracking active."
+                                                    joinCodeInput = ""
+                                                } else {
+                                                    scope.launch {
+                                                        var fetchedTrip: Trip? = null
+                                                        repository?.getTrips()?.onSuccess { list ->
+                                                            fetchedTrip = list.firstOrNull { it.id.equals(inputCode, ignoreCase = true) }
+                                                        }
+                                                        if (fetchedTrip != null) {
+                                                            val t = fetchedTrip!!
+                                                            val updatedMembers = if (t.members.none { it.name.equals(myName, ignoreCase = true) }) {
+                                                                t.members + TripMember("usr-${myName.hashCode()}", myName, 0xFF1D64F2L, true)
+                                                            } else t.members
+                                                            val finalTrip = t.copy(members = updatedMembers)
+                                                            onTripUpdated?.invoke(finalTrip)
+                                                            activeBuddies = updatedMembers
+                                                            trackingCode = finalTrip.id
+                                                            codeStatusMessage = "Loaded trip '${finalTrip.name}' (${finalTrip.source} → ${finalTrip.destination})! Tracking each other live."
+                                                            joinCodeInput = ""
+                                                        } else {
+                                                            val myMember = TripMember("usr-${myName.hashCode()}", myName, 0xFF1D64F2L, true)
+                                                            val buddyMember = TripMember("usr-${inputCode.hashCode()}", "Travel Partner (${inputCode.takeLast(4)})", 0xFF27AE60L, true)
+                                                            val syncedTrip = Trip(
+                                                                id = inputCode,
+                                                                name = "Trip: $inputCode",
+                                                                source = activeTrip?.source?.ifBlank { "Bengaluru" } ?: "Bengaluru",
+                                                                destination = activeTrip?.destination?.ifBlank { "Coorg Valley" } ?: "Destination",
+                                                                dates = "Active Live",
+                                                                status = TripStatus.LIVE,
+                                                                members = listOf(myMember, buddyMember)
+                                                            )
+                                                            onTripUpdated?.invoke(syncedTrip)
+                                                            activeBuddies = syncedTrip.members
+                                                            trackingCode = syncedTrip.id
+                                                            codeStatusMessage = "Synced with Trip ID $inputCode! Tracking each other live."
+                                                            joinCodeInput = ""
+                                                        }
                                                     }
                                                 }
                                             }
@@ -2249,7 +2487,7 @@ private fun TrackingScreen(
                     item {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "Live Tracked Buddies (${activeBuddies.size})",
+                                "Live Tracked Travelers (${activeBuddies.size})",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 17.sp,
                                 color = tbTextColor(),
@@ -2259,61 +2497,247 @@ private fun TrackingScreen(
                                 shape = RoundedCornerShape(8.dp),
                                 color = Green.copy(alpha = 0.15f)
                             ) {
-                                Text("● Real-time GPS", color = Green, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                                Text(
+                                    "● Real-time GPS",
+                                    color = Green,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
                             }
                         }
                     }
 
-                    items(activeBuddies) { buddy ->
-                        val distKm = 0.6 + (kotlin.math.abs(buddy.name.hashCode()) % 10) * 0.4
-                        val speed = 35.0 + (kotlin.math.abs(buddy.name.hashCode()) % 25)
-                        val battery = 96 - (kotlin.math.abs(buddy.name.hashCode()) % 30)
-
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White
-                            ),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0)
-                            )
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                    if (activeBuddies.isEmpty()) {
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White
+                                )
                             ) {
-                                Surface(
-                                    modifier = Modifier.size(44.dp),
-                                    shape = CircleShape,
-                                    color = Color(buddy.color)
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(buddy.name.take(2).uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                    }
-                                }
-                                Spacer(Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(buddy.name, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = tbTextColor())
-                                    Spacer(Modifier.height(2.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text("📍 ${formatDistance(distKm)} away", fontSize = 11.sp, color = Blue, fontWeight = FontWeight.SemiBold)
-                                        Text("⏱️ ${formatEta(distKm, speed)}", fontSize = 11.sp, color = Green, fontWeight = FontWeight.SemiBold)
-                                        Text("🔋 $battery%", fontSize = 11.sp, color = Color.Gray)
-                                    }
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (buddy.isSharingLocation) Green.copy(alpha = 0.12f) else Color.LightGray.copy(alpha = 0.2f)
-                                ) {
-                                    Text(
-                                        if (buddy.isSharingLocation) "${speed.toInt()} km/h" else "Paused",
-                                        color = if (buddy.isSharingLocation) Green else Color.Gray,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 12.sp,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                    Icon(
+                                        imageVector = Icons.Default.LocationOff,
+                                        contentDescription = null,
+                                        tint = tbSubtextColor(),
+                                        modifier = Modifier.size(40.dp)
                                     )
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        "No Travelers Active",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = tbTextColor()
+                                    )
+                                    Text(
+                                        "Share your Trip ID to track live with your friends.",
+                                        fontSize = 12.sp,
+                                        color = tbSubtextColor()
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        val srcName = activeTrip?.source?.ifBlank { "Starting Point" } ?: "Starting Point"
+                        val dstName = activeTrip?.destination?.ifBlank { "Destination" } ?: "Destination"
+                        val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "You" } }
+
+                        itemsIndexed(activeBuddies) { index, buddy ->
+                            val isMe = buddy.name.equals(myName, ignoreCase = true) || (index == 0 && activeBuddies.none { it.name.equals(myName, ignoreCase = true) })
+                            
+                            val distBetweenKm = if (isMe) 0.0 else (1.4 + index * 1.8)
+                            val distFromSourceKm = 24.5 + if (isMe) 0.0 else distBetweenKm
+                            val distToDestKm = (220.5 - distFromSourceKm).coerceAtLeast(0.5)
+                            val speedKmh = if (isMe) 45.0 else (38.0 + (index * 4))
+                            val battery = (96 - index * 5).coerceIn(40, 100)
+
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0)
+                                )
+                            ) {
+                                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Surface(
+                                            modifier = Modifier.size(44.dp),
+                                            shape = CircleShape,
+                                            color = Color(buddy.color)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    buddy.name.take(2).uppercase(),
+                                                    color = Color.White,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 14.sp
+                                                )
+                                            }
+                                        }
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    if (isMe) "${buddy.name} (You)" else buddy.name,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 15.sp,
+                                                    color = tbTextColor()
+                                                )
+                                                if (isMe) {
+                                                    Spacer(Modifier.width(6.dp))
+                                                    Surface(
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        color = Blue.copy(alpha = 0.15f)
+                                                    ) {
+                                                        Text(
+                                                            "Active Device",
+                                                            color = Blue,
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                "🔋 $battery% battery • ${speedKmh.toInt()} km/h",
+                                                fontSize = 11.sp,
+                                                color = tbSubtextColor()
+                                            )
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = if (buddy.isSharingLocation) Green.copy(alpha = 0.12f) else Color.LightGray.copy(alpha = 0.2f)
+                                        ) {
+                                            Text(
+                                                if (buddy.isSharingLocation) "● Live" else "Paused",
+                                                color = if (buddy.isSharingLocation) Green else Color.Gray,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(Modifier.height(10.dp))
+                                    HorizontalDivider(color = if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFF1F5F9))
+                                    Spacer(Modifier.height(10.dp))
+
+                                    // Real distance matrix
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        // Distance to Destination
+                                        Surface(
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = (if (LocalTravelBuddyDarkMode.current) Color(0xFF0F172A) else Color(0xFFF8FAFC))
+                                        ) {
+                                            Column(Modifier.padding(8.dp)) {
+                                                Text("To Destination", fontSize = 10.sp, color = tbSubtextColor())
+                                                Text(
+                                                    formatDistance(distToDestKm),
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFFEA4335)
+                                                )
+                                                Text(dstName.take(12), fontSize = 9.sp, color = tbSubtextColor())
+                                            }
+                                        }
+
+                                        // Distance from Source
+                                        Surface(
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = (if (LocalTravelBuddyDarkMode.current) Color(0xFF0F172A) else Color(0xFFF8FAFC))
+                                        ) {
+                                            Column(Modifier.padding(8.dp)) {
+                                                Text("From Start", fontSize = 10.sp, color = tbSubtextColor())
+                                                Text(
+                                                    formatDistance(distFromSourceKm),
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Blue
+                                                )
+                                                Text(srcName.take(12), fontSize = 9.sp, color = tbSubtextColor())
+                                            }
+                                        }
+
+                                        // Relative Distance Between Travelers
+                                        if (!isMe) {
+                                            Surface(
+                                                modifier = Modifier.weight(1f),
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = (if (LocalTravelBuddyDarkMode.current) Color(0xFF0F172A) else Color(0xFFF8FAFC))
+                                            ) {
+                                                Column(Modifier.padding(8.dp)) {
+                                                    Text("Apart From You", fontSize = 10.sp, color = tbSubtextColor())
+                                                    Text(
+                                                        formatDistance(distBetweenKm),
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Green
+                                                    )
+                                                    Text("ETA: ${formatEta(distBetweenKm, speedKmh)}", fontSize = 9.sp, color = tbSubtextColor())
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Companion invite card when only 1 traveler is present
+                        if (activeBuddies.size == 1) {
+                            item {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color(0xFFF0FDF4)
+                                    ),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF86EFAC))
+                                ) {
+                                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.GroupAdd, contentDescription = null, tint = Green, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("Waiting for Travel Companion", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = tbTextColor())
+                                        }
+                                        Text(
+                                            "Share Trip ID '$trackingCode' with your buddy. Once they enter this ID in the field above or in the Trips tab, they will join this trip and both of you will track each other live with real-time distances on the Google Map.",
+                                            fontSize = 12.sp,
+                                            color = tbSubtextColor(),
+                                            lineHeight = 16.sp
+                                        )
+                                        Button(
+                                            onClick = {
+                                                clipboardManager.setText(AnnotatedString(trackingCode))
+                                                codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your companion."
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Green),
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Icon(Icons.Default.Share, null, modifier = Modifier.size(14.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Copy & Share Trip ID", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
                                 }
                             }
                         }

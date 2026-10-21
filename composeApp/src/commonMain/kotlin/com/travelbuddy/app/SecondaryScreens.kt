@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.rememberScrollState
@@ -218,57 +219,62 @@ internal fun ProfileScreen(
             .fillMaxSize()
             .background(if (darkMode) Color(0xFF10151C) else Tb.Page)
             .verticalScroll(scrollState)
-            .padding(bottom = 100.dp)
+            .padding(bottom = 120.dp)
     ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(140.dp)
-                .background(Brush.horizontalGradient(listOf(Color(0xFF0F3E4D), Color(0xFF1E6F7D))))
+        // Compact modern header bar
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = if (darkMode) Color(0xFF151C26) else Color(0xFF0F3E4D),
+            shadowElevation = 2.dp
         ) {
-            IconButton(
-                onClick = onClose,
-                modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = Color.White
+                IconButton(onClick = onClose, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "My Profile",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 19.sp
                 )
             }
-            Text(
-                "My Profile",
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp),
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp
-            )
         }
 
         Column(
             Modifier
                 .padding(horizontal = 16.dp)
-                .padding(top = 12.dp, bottom = 24.dp),
+                .padding(top = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Avatar(localName, Color(0xFFBC4E23), 74)
-                Spacer(Modifier.width(16.dp))
+                Avatar(localName, Color(0xFFBC4E23), 64)
+                Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(localName, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = primaryText)
+                    Text(localName, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = primaryText)
                     Spacer(Modifier.height(2.dp))
-                    Text(phone, fontSize = 14.sp, color = secondaryText)
-                    Spacer(Modifier.height(6.dp))
+                    Text(phone, fontSize = 13.sp, color = secondaryText)
+                    Spacer(Modifier.height(4.dp))
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = Tb.Green.copy(alpha = 0.15f)
                     ) {
                         Text(
                             "Verified Traveler",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             color = Tb.Green,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold
@@ -305,7 +311,9 @@ internal fun ProfileScreen(
                 }
             }
 
-            // Prominent Logout Button
+            Spacer(Modifier.height(4.dp))
+
+            // Prominent, Well-Assigned Logout Button
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -315,7 +323,8 @@ internal fun ProfileScreen(
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
                     if (darkMode) Color(0xFF881337) else Color(0xFFFECDD3)
-                )
+                ),
+                shadowElevation = 1.dp
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
@@ -339,11 +348,11 @@ internal fun ProfileScreen(
             }
 
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TravelBuddyLogo(size = 24.dp)
+                TravelBuddyLogo(size = 20.dp)
                 Spacer(Modifier.size(8.dp))
                 Text("Travel Buddy v0.1.0 • Ready for Play Store", color = secondaryText, fontSize = 12.sp)
             }
