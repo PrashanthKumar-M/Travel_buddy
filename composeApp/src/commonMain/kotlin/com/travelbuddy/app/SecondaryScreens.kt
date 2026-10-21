@@ -351,7 +351,7 @@ internal fun ProfileScreen(
             ) {
                 TravelBuddyLogo(size = 18.dp)
                 Spacer(Modifier.size(8.dp))
-                Text("Travel Buddy v0.1.0 • Ready for Play Store", color = secondaryText, fontSize = 11.sp)
+                Text("Travel Buddy v1.0.0 • Ready for Play Store", color = secondaryText, fontSize = 11.sp)
             }
 
             // Generous clearance space so the logout button is 100% above any bottom navigation bar
