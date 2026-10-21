@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -185,7 +186,7 @@ fun LiveGoogleMapView(
             }
         )
     ) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
@@ -196,11 +197,30 @@ fun LiveGoogleMapView(
                     }
                 }
         ) {
+            val density = LocalDensity.current
+            val widthPx = with(density) { maxWidth.toPx() }
+            val heightPx = with(density) { maxHeight.toPx() }
+            val cx = widthPx / 2f + panOffsetX
+            val cy = heightPx / 2f + panOffsetY
+
+            // Fixed route waypoints locked in unified canvas/screen coordinate space
+            val p1 = Offset(cx - 120f * zoomLevel, cy - 75f * zoomLevel) // Fixed Start Point
+            val p2 = Offset(cx - 60f * zoomLevel, cy - 35f * zoomLevel)  // Route Checkpoint 1
+            val p3 = Offset(cx, cy)                                       // Route Center
+            val p4 = Offset(cx + 60f * zoomLevel, cy + 35f * zoomLevel)   // Route Checkpoint 2
+            val p5 = Offset(cx + 115f * zoomLevel, cy + 70f * zoomLevel)  // Fixed Destination Point
+
+            // Dynamic live location traveler position along the route line based on movement
+            val t = motionProgress // smoothly animates / updates along the route
+            val travelerPos = when {
+                t < 0.25f -> Offset(p1.x + (p2.x - p1.x) * (t / 0.25f), p1.y + (p2.y - p1.y) * (t / 0.25f))
+                t < 0.50f -> Offset(p2.x + (p3.x - p2.x) * ((t - 0.25f) / 0.25f), p2.y + (p3.y - p2.y) * ((t - 0.25f) / 0.25f))
+                t < 0.75f -> Offset(p3.x + (p4.x - p3.x) * ((t - 0.50f) / 0.25f), p3.y + (p4.y - p3.y) * ((t - 0.50f) / 0.25f))
+                else -> Offset(p4.x + (p5.x - p4.x) * ((t - 0.75f) / 0.25f), p4.y + (p5.y - p4.y) * ((t - 0.75f) / 0.25f))
+            }
+
             // Realistic Map Canvas (Canvas Layer)
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val cx = size.width / 2 + panOffsetX
-                val cy = size.height / 2 + panOffsetY
-
                 val streetBg = when (mapTheme) {
                     MapTheme.GOOGLE_STREETS -> Color(0xFFF3F5F7)
                     MapTheme.SATELLITE -> Color(0xFF1B261D)
@@ -263,22 +283,12 @@ fun LiveGoogleMapView(
                     drawLine(roadColor, Offset(cx + i * step, cy - 200f * zoomLevel), Offset(cx + i * step, cy + 200f * zoomLevel), strokeWidth = 3f * zoomLevel)
                 }
 
-                // 4. Primary Route Polyline (From Top-Left to Bottom-Right matching attached image)
-                val p1 = Offset(cx - 130f * zoomLevel, cy - 110f * zoomLevel)
-                val p2 = Offset(cx - 70f * zoomLevel, cy - 50f * zoomLevel)
-                val p3 = Offset(cx - 10f * zoomLevel, cy + 10f * zoomLevel)
-                val p4 = Offset(cx + 40f * zoomLevel, cy + 60f * zoomLevel)
-                val p5 = Offset(cx + 90f * zoomLevel, cy + 120f * zoomLevel)
-
+                // 4. Primary Route Polyline connecting p1 to p5
                 val routePath = Path().apply {
                     moveTo(p1.x, p1.y)
-                    lineTo(p1.x + 20f * zoomLevel, p1.y + 40f * zoomLevel)
                     lineTo(p2.x, p2.y)
-                    lineTo(p2.x + 25f * zoomLevel, p2.y + 35f * zoomLevel)
                     lineTo(p3.x, p3.y)
-                    lineTo(p3.x + 20f * zoomLevel, p3.y + 30f * zoomLevel)
                     lineTo(p4.x, p4.y)
-                    lineTo(p4.x + 20f * zoomLevel, p4.y + 35f * zoomLevel)
                     lineTo(p5.x, p5.y)
                 }
 
@@ -297,10 +307,10 @@ fun LiveGoogleMapView(
 
                 // Directional Chevrons '>' along the route
                 val chevrons = listOf(
-                    Offset(cx - 105f * zoomLevel, cy - 80f * zoomLevel),
-                    Offset(cx - 45f * zoomLevel, cy - 20f * zoomLevel),
-                    Offset(cx + 15f * zoomLevel, cy + 35f * zoomLevel),
-                    Offset(cx + 65f * zoomLevel, cy + 90f * zoomLevel)
+                    Offset(p1.x + (p2.x - p1.x) * 0.5f, p1.y + (p2.y - p1.y) * 0.5f),
+                    Offset(p2.x + (p3.x - p2.x) * 0.5f, p2.y + (p3.y - p2.y) * 0.5f),
+                    Offset(p3.x + (p4.x - p3.x) * 0.5f, p3.y + (p4.y - p3.y) * 0.5f),
+                    Offset(p4.x + (p5.x - p4.x) * 0.5f, p4.y + (p5.y - p4.y) * 0.5f)
                 )
                 chevrons.forEach { ch ->
                     val arrow = Path().apply {
@@ -311,145 +321,114 @@ fun LiveGoogleMapView(
                     drawPath(arrow, Color.White, style = Stroke(width = 2.5f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round))
                 }
 
-                // Pulsing beacon at active traveler position
-                val travelerX = cx + (-10f + (motionProgress - 0.5f) * 30f) * zoomLevel
-                val travelerY = cy + (10f + (motionProgress - 0.5f) * 30f) * zoomLevel
+                // Fixed Start Node on Map at p1
+                drawCircle(Color(0xFF16A34A), radius = 8f * zoomLevel, center = p1)
+                drawCircle(Color.White, radius = 3.5f * zoomLevel, center = p1)
+
+                // Fixed Destination Node on Map at p5
+                drawCircle(Color(0xFFDC2626), radius = 8f * zoomLevel, center = p5)
+                drawCircle(Color.White, radius = 3.5f * zoomLevel, center = p5)
+
+                // Fixed Checkpoint Nodes at p2 and p4
+                drawCircle(Color(0xFF16A34A), radius = 5f * zoomLevel, center = p2)
+                drawCircle(Color(0xFFEA580C), radius = 5f * zoomLevel, center = p4)
+
+                // Pulsing beacon at dynamic active traveler position on the route line
                 drawCircle(
                     color = Color(0xFF1D64F2).copy(alpha = pulseAlpha),
                     radius = pulseRadius * zoomLevel,
-                    center = Offset(travelerX, travelerY)
+                    center = travelerPos
+                )
+                drawCircle(
+                    color = Color(0xFF1D64F2),
+                    radius = 8f * zoomLevel,
+                    center = travelerPos
+                )
+                drawCircle(
+                    color = Color.White,
+                    radius = 3.5f * zoomLevel,
+                    center = travelerPos
                 )
             }
 
-            // Real-time Waypoint & Traveler Badges (Compact, non-obtrusive map pins so route is 100% visible!)
-            val cx = panOffsetX
-            val cy = panOffsetY
-
-            // 1. Waypoint 1: Starting Point (Compact Green Pin)
+            // Real-time Waypoint & Dynamic Traveler Pins (Locked to Canvas coordinates)
+            // 1. Waypoint 1: Fixed Starting Point Pin
             Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(x = (cx - 130f * zoomLevel).dp, y = (cy - 110f * zoomLevel).dp)
+                modifier = Modifier.offset(
+                    x = with(density) { (p1.x).toDp() - 28.dp },
+                    y = with(density) { (p1.y).toDp() - 28.dp }
+                )
             ) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     color = Color(0xFF16A34A),
-                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
-                    shadowElevation = 4.dp
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
+                    shadowElevation = 3.dp
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+                        Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(10.dp))
                         Spacer(Modifier.width(3.dp))
-                        Text(sourceName.take(12), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                        Text(sourceName.take(12), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 9.sp)
                     }
                 }
             }
 
-            // 2. Waypoint 2: Highway Checkpoint (Compact Pin)
+            // 2. Waypoint 5: Fixed Destination Point Pin
             Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(x = (cx - 70f * zoomLevel).dp, y = (cy - 50f * zoomLevel).dp)
+                modifier = Modifier.offset(
+                    x = with(density) { (p5.x).toDp() - 28.dp },
+                    y = with(density) { (p5.y).toDp() + 10.dp }
+                )
             ) {
                 Surface(
-                    shape = CircleShape,
-                    color = Color(0xFF16A34A),
-                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
-                    shadowElevation = 3.dp,
-                    modifier = Modifier.size(20.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text("✓", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-
-            // 3. Waypoint 3: Active Traveler (You) (Moving Animated Avatar & Beacon Pin)
-            val travelerOffset = (motionProgress - 0.5f) * 30f
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(x = (cx - 10f * zoomLevel + travelerOffset).dp, y = (cy + 10f * zoomLevel + travelerOffset).dp)
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color(0xFF1D64F2),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
-                        shadowElevation = 4.dp
-                    ) {
-                        val activeName = members.firstOrNull()?.name?.take(10) ?: "You"
-                        val vIcon = when (vehicleType.uppercase()) {
-                            "BIKE", "MOTORCYCLE" -> "🏍️"
-                            "CYCLE", "BICYCLE" -> "🚲"
-                            "SCOOTER" -> "🛵"
-                            "SUV" -> "🚙"
-                            "BUS" -> "🚌"
-                            else -> "🚗"
-                        }
-                        Text(
-                            "$vIcon $activeName • 45 km/h",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 10.sp,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                    Spacer(Modifier.height(2.dp))
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFF1D64F2),
-                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                        shadowElevation = 4.dp,
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        TravelerAvatar(avatarType = members.firstOrNull()?.avatarType ?: "MALE_1", size = 26.dp)
-                    }
-                }
-            }
-
-            // 4. Waypoint 4: Rest / Fuel Stop (Compact Orange Pin)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(x = (cx + 40f * zoomLevel).dp, y = (cy + 60f * zoomLevel).dp)
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color(0xFFEA580C),
-                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
-                    shadowElevation = 3.dp,
-                    modifier = Modifier.size(20.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text("4", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-
-            // 5. Waypoint 5: Final Destination (Compact Red Flag Pin)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(x = (cx + 90f * zoomLevel).dp, y = (cy + 120f * zoomLevel).dp)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     color = Color(0xFFDC2626),
-                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
-                    shadowElevation = 4.dp
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
+                    shadowElevation = 3.dp
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("🏁", fontSize = 10.sp)
+                        Text("🏁", fontSize = 9.sp)
                         Spacer(Modifier.width(3.dp))
-                        Text(destinationName.take(12), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                        Text(destinationName.take(12), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 9.sp)
                     }
+                }
+            }
+
+            // 3. Dynamic Active Traveler Pin moving along the line
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (travelerPos.x).toDp() - 44.dp },
+                    y = with(density) { (travelerPos.y).toDp() - 32.dp }
+                )
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF1D64F2),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
+                    shadowElevation = 4.dp
+                ) {
+                    val activeName = members.firstOrNull()?.name?.take(10) ?: "You"
+                    val vIcon = when (vehicleType.uppercase()) {
+                        "BIKE", "MOTORCYCLE" -> "🏍️"
+                        "CYCLE", "BICYCLE" -> "🚲"
+                        "SCOOTER" -> "🛵"
+                        "SUV" -> "🚙"
+                        "BUS" -> "🚌"
+                        else -> "🚗"
+                    }
+                    Text(
+                        "$vIcon $activeName • 45 km/h",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
                 }
             }
 
@@ -457,27 +436,27 @@ fun LiveGoogleMapView(
             Surface(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
                     .fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(10.dp),
                 color = if (darkMode) Color(0xFF0F172A).copy(alpha = 0.92f) else Color.White.copy(alpha = 0.94f),
-                shadowElevation = 3.dp,
+                shadowElevation = 2.dp,
                 border = androidx.compose.foundation.BorderStroke(1.dp, if (darkMode) Color(0xFF334155) else Color(0xFFE2E8F0))
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    MilestoneStep("1. Start", "✓ Done", Color(0xFF16A34A))
-                    Text("→", fontSize = 10.sp, color = Color.Gray)
-                    MilestoneStep("2. Checkpoint", "✓ Done", Color(0xFF16A34A))
-                    Text("→", fontSize = 10.sp, color = Color.Gray)
-                    MilestoneStep("3. Live Traveler", "🔵 45km/h", Color(0xFF1D64F2))
-                    Text("→", fontSize = 10.sp, color = Color.Gray)
-                    MilestoneStep("4. Rest Stop", "🕒 2:30 PM", Color(0xFFEA580C))
-                    Text("→", fontSize = 10.sp, color = Color.Gray)
-                    MilestoneStep("5. Destination", "🏁 Final", Color(0xFFDC2626))
+                    MilestoneStep("1. Start", "✓ Fixed", Color(0xFF16A34A))
+                    Text("→", fontSize = 9.sp, color = Color.Gray)
+                    MilestoneStep("2. CP", "✓ Done", Color(0xFF16A34A))
+                    Text("→", fontSize = 9.sp, color = Color.Gray)
+                    MilestoneStep("3. Live", "🔵 Live", Color(0xFF1D64F2))
+                    Text("→", fontSize = 9.sp, color = Color.Gray)
+                    MilestoneStep("4. Rest", "🕒 Stop", Color(0xFFEA580C))
+                    Text("→", fontSize = 9.sp, color = Color.Gray)
+                    MilestoneStep("5. Dest", "🏁 Fixed", Color(0xFFDC2626))
                 }
             }
 

@@ -281,13 +281,7 @@ fun AvatarSelector(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            "Choose Your Play Store Safe Travel Avatar",
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onSurface
-        )
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(AvatarProfile.values()) { profile ->
                 val isSelected = selectedAvatar.equals(profile.id, ignoreCase = true)

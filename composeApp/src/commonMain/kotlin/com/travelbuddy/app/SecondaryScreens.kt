@@ -223,7 +223,7 @@ internal fun ProfileScreen(
             .background(if (darkMode) Color(0xFF10151C) else Tb.Page)
             .verticalScroll(scrollState)
     ) {
-        // Compact modern header bar
+        // Compact header bar (without extra statusBarsPadding so content fits on screen)
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = if (darkMode) Color(0xFF151C26) else Color(0xFF0F3E4D),
@@ -232,23 +232,22 @@ internal fun ProfileScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
+                IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back",
                         tint = Color.White
                     )
                 }
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(6.dp))
                 Text(
                     "My Profile",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp
+                    fontSize = 17.sp
                 )
             }
         }
@@ -256,30 +255,30 @@ internal fun ProfileScreen(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(top = 12.dp, bottom = 48.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 14.dp)
+                .padding(top = 8.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TravelerAvatar(avatarType = selectedAvatar, size = 60.dp)
-                Spacer(Modifier.width(14.dp))
+                TravelerAvatar(avatarType = selectedAvatar, size = 48.dp)
+                Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(localName, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = primaryText)
+                    Text(localName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = primaryText)
+                    Spacer(Modifier.height(1.dp))
+                    Text(phone, fontSize = 11.sp, color = secondaryText)
                     Spacer(Modifier.height(2.dp))
-                    Text(phone, fontSize = 12.sp, color = secondaryText)
-                    Spacer(Modifier.height(4.dp))
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(8.dp),
                         color = Tb.Green.copy(alpha = 0.15f)
                     ) {
                         Text(
                             "Verified Traveler",
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
                             color = Tb.Green,
-                            fontSize = 10.sp,
+                            fontSize = 9.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -289,14 +288,14 @@ internal fun ProfileScreen(
             // Copyright-Free Play Store Safe Avatar Selector
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(14.dp),
                 color = if (darkMode) Color(0xFF1E2836) else Color.White,
                 border = androidx.compose.foundation.BorderStroke(1.dp, if (darkMode) Color(0xFF2C394B) else Color(0xFFE2E8F0))
             ) {
                 AvatarSelector(
                     selectedAvatar = selectedAvatar,
                     onSelect = { selectedAvatar = it },
-                    modifier = Modifier.padding(14.dp)
+                    modifier = Modifier.padding(8.dp)
                 )
             }
 
@@ -317,10 +316,10 @@ internal fun ProfileScreen(
                         Modifier
                             .fillMaxWidth()
                             .clickable(onClick = onToggleDarkMode)
-                            .padding(vertical = 12.dp),
+                            .padding(vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Dark mode", Modifier.weight(1f), color = if (darkMode) Color(0xFFEAF0F8) else Tb.Navy)
+                        Text("Dark mode", Modifier.weight(1f), color = if (darkMode) Color(0xFFEAF0F8) else Tb.Navy, fontSize = 13.sp)
                         Switch(checked = darkMode, onCheckedChange = { onToggleDarkMode() })
                     }
                     ProfileRow("Settings", "", null)
@@ -328,12 +327,12 @@ internal fun ProfileScreen(
                 }
             }
 
-            // Prominent, Well-Assigned Logout Button with plenty of padding
+            // Prominent Logout Button fitted inside screen
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = { showLogoutConfirm = true }),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = if (darkMode) Color(0xFF3B151E) else Color(0xFFFEF2F2),
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
@@ -342,7 +341,7 @@ internal fun ProfileScreen(
                 shadowElevation = 1.dp
             ) {
                 Row(
-                    modifier = Modifier.padding(vertical = 13.dp, horizontal = 16.dp),
+                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
@@ -350,14 +349,14 @@ internal fun ProfileScreen(
                         imageVector = Icons.AutoMirrored.Filled.Logout,
                         contentDescription = "Logout",
                         tint = Tb.Red,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(17.dp)
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = "Log Out of Travel Buddy",
                         color = Tb.Red,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
+                        fontSize = 14.sp
                     )
                 }
             }
@@ -452,12 +451,12 @@ internal fun ProfileScreen(
 private fun ProfileRow(label: String, value: String, onClick: (() -> Unit)?) {
     val dark = LocalTravelBuddyDarkMode.current
     Row(
-        Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(vertical = 12.dp),
+        Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, Modifier.weight(1f), color = if (dark) Color(0xFFEAF0F8) else Tb.Navy)
-        if (value.isNotEmpty()) Text(value, color = if (dark) Color(0xFFAEB9C8) else Tb.Gray, fontSize = 13.sp)
-        if (onClick != null) Text("  ›", color = if (dark) Color(0xFFAEB9C8) else Tb.Gray)
+        Text(label, Modifier.weight(1f), color = if (dark) Color(0xFFEAF0F8) else Tb.Navy, fontSize = 13.sp)
+        if (value.isNotEmpty()) Text(value, color = if (dark) Color(0xFFAEB9C8) else Tb.Gray, fontSize = 12.sp)
+        if (onClick != null) Text("  ›", color = if (dark) Color(0xFFAEB9C8) else Tb.Gray, fontSize = 13.sp)
     }
 }
 
