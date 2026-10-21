@@ -255,10 +255,9 @@ internal fun ProfileScreen(
 
         Column(
             Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .padding(top = 12.dp, bottom = 100.dp),
+                .padding(top = 12.dp, bottom = 48.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
