@@ -1401,6 +1401,7 @@ private fun TripsScreen(
     var copyTripFeedback by remember { mutableStateOf<String?>(null) }
     var tripPendingDelete by remember { mutableStateOf<Trip?>(null) }
     val darkMode = LocalTravelBuddyDarkMode.current
+    val clipboardManager = LocalClipboardManager.current
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1602,7 +1603,12 @@ private fun TripsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
+                                    clipboardManager.setText(AnnotatedString(trip.id))
                                     copyTripFeedback = "Trip ID '${trip.id}' copied! Share with another user to track together."
+                                    PlatformShare.shareText(
+                                        text = "Join my live trip '${trip.name}' on Travel Buddy!\nTrip ID: ${trip.id}\nTrack my live location in real-time.",
+                                        title = "Share Trip ID"
+                                    )
                                 }
                         ) {
                             Row(
@@ -2435,6 +2441,27 @@ private fun RideTypeButton(
 // LIVE TRACKING HUB: 1. LIVE USERS  2. VEHICLE GPS  3. CHILD BAG TAGS
 // ============================================================
 
+fun deduplicateTripMembers(members: List<TripMember>, myName: String = ""): List<TripMember> {
+    val cleanMyName = myName.trim().lowercase().substringBefore("@")
+    val seen = mutableSetOf<String>()
+    val result = mutableListOf<TripMember>()
+
+    // Sort to place "You" / current device first
+    val sorted = members.sortedByDescending { m ->
+        val mClean = m.name.trim().lowercase().substringBefore("@")
+        (cleanMyName.isNotBlank() && mClean == cleanMyName) || m.name.equals(myName, ignoreCase = true)
+    }
+
+    for (m in sorted) {
+        val norm = m.name.trim().lowercase().substringBefore("@")
+        val key = if (norm.isNotBlank()) norm else m.id.trim().lowercase()
+        if (seen.add(key)) {
+            result.add(m)
+        }
+    }
+    return result
+}
+
 @Composable
 private fun TrackingScreen(
     activeTrip: Trip? = null,
@@ -2461,17 +2488,21 @@ private fun TrackingScreen(
     var joinCodeInput by remember { mutableStateOf("") }
     var codeStatusMessage by remember { mutableStateOf<String?>(null) }
     var activeBuddies by remember(members) {
-        mutableStateOf(members)
+        mutableStateOf(deduplicateTripMembers(members, currentUserName))
     }
     var isMapFullscreen by remember { mutableStateOf(false) }
     var showGroupChat by remember { mutableStateOf(false) }
+
+    val distinctBuddies = remember(activeBuddies, currentUserName) {
+        deduplicateTripMembers(activeBuddies, currentUserName)
+    }
 
     // Keep activeBuddies synced when activeTrip or members change
     LaunchedEffect(activeTrip, members) {
         if (activeTrip != null) {
             trackingCode = activeTrip.id
         }
-        activeBuddies = members
+        activeBuddies = deduplicateTripMembers(members, currentUserName)
     }
 
     // Bidirectional Real-time Multi-Device Sync: Auto-refreshes co-travelers and telemetry every 3.5s
@@ -2481,16 +2512,21 @@ private fun TrackingScreen(
         val myId = SessionManager.getUserId().ifBlank { "usr-${myName.hashCode().absoluteValue}" }
 
         while (isActive) {
-            // Send this device's live telemetry (authentic battery percentage and GPS coords)
+            // Send this device's live telemetry (authentic battery percentage and real GPS coords)
             val myBattery = PlatformBattery.getBatteryLevel()
+            val liveLoc = PlatformLocation.getCurrentLocation()
             val (srcLat, srcLng) = LocationCoordinateResolver.resolveCoordinates(activeTrip?.source ?: "Bengaluru")
+            val uploadLat = liveLoc?.latitude ?: srcLat
+            val uploadLng = liveLoc?.longitude ?: srcLng
+            val uploadSpeed = if (liveLoc != null && liveLoc.speedKmh > 0) liveLoc.speedKmh else 42.0
+
             repository?.updateLocation(
                 LocationUpdateRequest(
                     tripId = currentTripId,
                     userId = myId,
-                    latitude = srcLat,
-                    longitude = srcLng,
-                    speed = 42.0,
+                    latitude = uploadLat,
+                    longitude = uploadLng,
+                    speed = uploadSpeed,
                     battery = myBattery,
                     timestamp = System.currentTimeMillis()
                 )
@@ -2502,9 +2538,10 @@ private fun TrackingScreen(
                     it.id.equals(currentTripId, ignoreCase = true) || it.tripCode.equals(currentTripId, ignoreCase = true)
                 }
                 if (serverTrip != null && serverTrip.members.isNotEmpty()) {
-                    if (serverTrip.members.size != activeBuddies.size || serverTrip.members != activeBuddies) {
-                        activeBuddies = serverTrip.members
-                        onTripUpdated?.invoke(serverTrip)
+                    val cleanList = deduplicateTripMembers(serverTrip.members, myName)
+                    if (cleanList.size != activeBuddies.size || cleanList != activeBuddies) {
+                        activeBuddies = cleanList
+                        onTripUpdated?.invoke(serverTrip.copy(members = cleanList))
                     }
                 }
             }
@@ -2579,7 +2616,7 @@ private fun TrackingScreen(
                         LiveGoogleMapView(
                             sourceName = activeTrip?.source?.ifBlank { "Bengaluru" } ?: "Starting Point",
                             destinationName = activeTrip?.destination?.ifBlank { "Coorg Valley" } ?: "Trip Destination",
-                            members = activeBuddies,
+                            members = distinctBuddies,
                             vehicle = null,
                             vehicleType = activeTrip?.vehicleType ?: "CAR",
                             childBagDevice = null,
@@ -2633,6 +2670,10 @@ private fun TrackingScreen(
                                             modifier = Modifier.clickable {
                                                 clipboardManager.setText(AnnotatedString(trackingCode))
                                                 codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your travel buddy."
+                                                PlatformShare.shareText(
+                                                    text = "Join my live trip on Travel Buddy!\nTrip ID: $trackingCode\nTrack my live location in real-time.",
+                                                    title = "Share Trip ID"
+                                                )
                                             }
                                         ) {
                                             Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2670,10 +2711,11 @@ private fun TrackingScreen(
                                                     // Call remote joinTrip so the server registers this device into the trip!
                                                     repository?.joinTrip(inputCode, myId, myName)
                                                         ?.onSuccess { joinedTrip ->
-                                                            activeBuddies = joinedTrip.members
+                                                            val clean = deduplicateTripMembers(joinedTrip.members, myName)
+                                                            activeBuddies = clean
                                                             trackingCode = joinedTrip.id
-                                                            onTripUpdated?.invoke(joinedTrip)
-                                                            codeStatusMessage = "Successfully joined '${joinedTrip.name}' (${joinedTrip.members.size} travelers)! Live tracking active."
+                                                            onTripUpdated?.invoke(joinedTrip.copy(members = clean))
+                                                            codeStatusMessage = "Successfully joined '${joinedTrip.name}' (${clean.size} travelers)! Live tracking active."
                                                             joinCodeInput = ""
                                                         }
                                                         ?.onFailure {
@@ -2681,14 +2723,16 @@ private fun TrackingScreen(
                                                             repository?.getTrips()?.onSuccess { list ->
                                                                 val found = list.firstOrNull { it.id.equals(inputCode, ignoreCase = true) || it.tripCode.equals(inputCode, ignoreCase = true) }
                                                                 if (found != null) {
-                                                                    val updatedMembers = if (found.members.none { it.name.equals(myName, ignoreCase = true) }) {
+                                                                    val myNorm = myName.trim().lowercase().substringBefore("@")
+                                                                    val updatedMembers = if (found.members.none { it.name.trim().lowercase().substringBefore("@") == myNorm }) {
                                                                         found.members + TripMember(myId, myName, 0xFF1D64F2L, true)
                                                                     } else found.members
-                                                                    val synced = found.copy(members = updatedMembers)
-                                                                    activeBuddies = updatedMembers
+                                                                    val clean = deduplicateTripMembers(updatedMembers, myName)
+                                                                    val synced = found.copy(members = clean)
+                                                                    activeBuddies = clean
                                                                     trackingCode = synced.id
                                                                     onTripUpdated?.invoke(synced)
-                                                                    codeStatusMessage = "Loaded trip '${synced.name}'! Live tracking active."
+                                                                    codeStatusMessage = "Loaded trip '${synced.name}' (${clean.size} travelers)! Live tracking active."
                                                                     joinCodeInput = ""
                                                                 } else {
                                                                     codeStatusMessage = "Trip ID '$inputCode' not found. Please verify the code."
@@ -2714,7 +2758,7 @@ private fun TrackingScreen(
                     item {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "Live Tracked Travelers (${activeBuddies.size})",
+                                "Live Tracked Travelers (${distinctBuddies.size})",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 17.sp,
                                 color = tbTextColor(),
@@ -2735,7 +2779,7 @@ private fun TrackingScreen(
                         }
                     }
 
-                    if (activeBuddies.size >= 2) {
+                    if (distinctBuddies.size >= 2) {
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2754,9 +2798,9 @@ private fun TrackingScreen(
                                     }
                                     Text("Real-time relative distance between each participant in this trip", fontSize = 11.sp, color = tbSubtextColor())
 
-                                    for (i in 0 until activeBuddies.size - 1) {
-                                        val u1 = activeBuddies[i]
-                                        val u2 = activeBuddies[i + 1]
+                                    for (i in 0 until distinctBuddies.size - 1) {
+                                        val u1 = distinctBuddies[i]
+                                        val u2 = distinctBuddies[i + 1]
                                         val u1Lat = u1.latitude ?: (12.9716 + i * 0.015)
                                         val u1Lng = u1.longitude ?: (77.5946 + i * 0.012)
                                         val u2Lat = u2.latitude ?: (12.9716 + (i + 1) * 0.015)
@@ -2800,7 +2844,7 @@ private fun TrackingScreen(
                         }
                     }
 
-                    if (activeBuddies.isEmpty()) {
+                    if (distinctBuddies.isEmpty()) {
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2837,8 +2881,10 @@ private fun TrackingScreen(
                     } else {
                         val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "You" } }
 
-                        itemsIndexed(activeBuddies) { index, buddy ->
-                            val isMe = buddy.name.equals(myName, ignoreCase = true) || (index == 0 && activeBuddies.none { it.name.equals(myName, ignoreCase = true) })
+                        itemsIndexed(distinctBuddies) { index, buddy ->
+                            val myNorm = myName.trim().lowercase().substringBefore("@")
+                            val buddyNorm = buddy.name.trim().lowercase().substringBefore("@")
+                            val isMe = buddy.name.equals(myName, ignoreCase = true) || (myNorm.isNotBlank() && buddyNorm == myNorm) || (index == 0 && distinctBuddies.none { it.name.trim().lowercase().substringBefore("@") == myNorm })
                             
                             val distBetweenKm = if (isMe) 0.0 else (1.4 + index * 1.8)
                             val distFromSourceKm = ((totalRouteKm * 0.08 + if (isMe) 0.0 else distBetweenKm) * 10.0).roundToInt() / 10.0

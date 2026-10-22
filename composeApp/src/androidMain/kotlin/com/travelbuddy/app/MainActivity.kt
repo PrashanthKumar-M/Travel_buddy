@@ -13,6 +13,7 @@ class MainActivity : ComponentActivity() {
         PlatformStorage.init(applicationContext)
         PlatformBattery.appContext = applicationContext
         PlatformLocation.init(applicationContext)
+        PlatformShare.appContext = applicationContext
         AndroidNotificationHelper.appContext = applicationContext
 
         // Request real GPS and system permissions

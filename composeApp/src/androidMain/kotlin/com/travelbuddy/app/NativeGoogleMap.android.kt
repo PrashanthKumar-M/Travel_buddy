@@ -4,17 +4,14 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.*
 import android.os.Bundle
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -57,14 +54,12 @@ actual fun NativeGoogleMapView(
     var googleMapInstance by remember { mutableStateOf<GoogleMap?>(null) }
     var currentMapType by remember { mutableStateOf(GoogleMap.MAP_TYPE_NORMAL) }
 
-    // MapView instance preserved across recompositions
     val mapView = remember {
         MapView(context).apply {
             onCreate(Bundle())
         }
     }
 
-    // Lifecycle synchronization
     DisposableEffect(lifecycleOwner, mapView) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -89,9 +84,9 @@ actual fun NativeGoogleMapView(
                 mapView.apply {
                     getMapAsync { map ->
                         googleMapInstance = map
-                        map.uiSettings.isZoomControlsEnabled = true
+                        map.uiSettings.isZoomControlsEnabled = false // using custom floating controls
                         map.uiSettings.isCompassEnabled = true
-                        map.uiSettings.isMyLocationButtonEnabled = true
+                        map.uiSettings.isMyLocationButtonEnabled = false
                         map.mapType = currentMapType
 
                         val fineLocGranted = ContextCompat.checkSelfPermission(
@@ -109,7 +104,8 @@ actual fun NativeGoogleMapView(
                             } catch (_: SecurityException) {}
                         }
 
-                        updateMapContent(
+                        renderGoogleMapContent(
+                            context = context,
                             map = map,
                             srcName = sourceName,
                             srcLat = sourceLat,
@@ -127,7 +123,8 @@ actual fun NativeGoogleMapView(
             update = {
                 googleMapInstance?.let { map ->
                     map.mapType = currentMapType
-                    updateMapContent(
+                    renderGoogleMapContent(
+                        context = context,
                         map = map,
                         srcName = sourceName,
                         srcLat = sourceLat,
@@ -144,75 +141,119 @@ actual fun NativeGoogleMapView(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Floating Google Map Controls overlay
-        // 1. Map Type Toggle (Streets, Satellite, Terrain)
-        Surface(
+        // Floating Action Buttons on Right (Zoom In, Zoom Out, Recenter, Layers)
+        Column(
             modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(10.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = Color.White.copy(alpha = 0.95f),
-            shadowElevation = 4.dp
+                .align(Alignment.CenterEnd)
+                .padding(end = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            IconButton(
-                onClick = {
-                    currentMapType = when (currentMapType) {
-                        GoogleMap.MAP_TYPE_NORMAL -> GoogleMap.MAP_TYPE_SATELLITE
-                        GoogleMap.MAP_TYPE_SATELLITE -> GoogleMap.MAP_TYPE_TERRAIN
-                        GoogleMap.MAP_TYPE_TERRAIN -> GoogleMap.MAP_TYPE_HYBRID
-                        else -> GoogleMap.MAP_TYPE_NORMAL
-                    }
-                    googleMapInstance?.mapType = currentMapType
-                },
-                modifier = Modifier.size(36.dp)
+            // Recenter Button (⌖)
+            Surface(
+                modifier = Modifier.size(42.dp),
+                shape = CircleShape,
+                color = Color.White,
+                shadowElevation = 4.dp
             ) {
-                Icon(
-                    imageVector = Icons.Default.Layers,
-                    contentDescription = "Map Layers",
-                    tint = Color(0xFF1A73E8),
-                    modifier = Modifier.size(20.dp)
-                )
+                IconButton(
+                    onClick = {
+                        googleMapInstance?.let { map ->
+                            val target = LatLng(currentUserLat, currentUserLng)
+                            map.animateCamera(CameraUpdateFactory.newLatLngZoom(target, 14f))
+                        }
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MyLocation,
+                        contentDescription = "Recenter GPS",
+                        tint = Color(0xFF1A73E8),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+
+            // Layers Button (⧉)
+            Surface(
+                modifier = Modifier.size(42.dp),
+                shape = CircleShape,
+                color = Color.White,
+                shadowElevation = 4.dp
+            ) {
+                IconButton(
+                    onClick = {
+                        currentMapType = when (currentMapType) {
+                            GoogleMap.MAP_TYPE_NORMAL -> GoogleMap.MAP_TYPE_SATELLITE
+                            GoogleMap.MAP_TYPE_SATELLITE -> GoogleMap.MAP_TYPE_TERRAIN
+                            GoogleMap.MAP_TYPE_TERRAIN -> GoogleMap.MAP_TYPE_HYBRID
+                            else -> GoogleMap.MAP_TYPE_NORMAL
+                        }
+                        googleMapInstance?.mapType = currentMapType
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Layers,
+                        contentDescription = "Map Layers",
+                        tint = Color(0xFF1E293B),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            // Zoom In (+)
+            Surface(
+                modifier = Modifier.size(42.dp),
+                shape = CircleShape,
+                color = Color.White,
+                shadowElevation = 4.dp
+            ) {
+                IconButton(
+                    onClick = {
+                        googleMapInstance?.animateCamera(CameraUpdateFactory.zoomIn())
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Zoom In",
+                        tint = Color(0xFF1E293B),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+
+            // Zoom Out (-)
+            Surface(
+                modifier = Modifier.size(42.dp),
+                shape = CircleShape,
+                color = Color.White,
+                shadowElevation = 4.dp
+            ) {
+                IconButton(
+                    onClick = {
+                        googleMapInstance?.animateCamera(CameraUpdateFactory.zoomOut())
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Remove,
+                        contentDescription = "Zoom Out",
+                        tint = Color(0xFF1E293B),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
             }
         }
 
-        // 2. Recenter Camera Button
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 10.dp, bottom = 60.dp),
-            shape = CircleShape,
-            color = Color.White,
-            shadowElevation = 4.dp
-        ) {
-            IconButton(
-                onClick = {
-                    googleMapInstance?.let { map ->
-                        val target = LatLng(currentUserLat, currentUserLng)
-                        map.animateCamera(CameraUpdateFactory.newLatLngZoom(target, 15f))
-                    }
-                },
-                modifier = Modifier.size(42.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.MyLocation,
-                    contentDescription = "Recenter",
-                    tint = Color(0xFF1A73E8),
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-        }
-
-        // 3. Live Tracking Status Badge
+        // Live Tracking Status Pill at Top-Left
         Surface(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(10.dp),
-            shape = RoundedCornerShape(10.dp),
+                .padding(12.dp),
+            shape = RoundedCornerShape(12.dp),
             color = Color(0xFF0F172A).copy(alpha = 0.88f),
-            shadowElevation = 3.dp
+            shadowElevation = 4.dp
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
@@ -223,7 +264,7 @@ actual fun NativeGoogleMapView(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    "Google Maps SDK Live",
+                    "Real-Time Multi-User Tracking",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.sp
@@ -233,7 +274,16 @@ actual fun NativeGoogleMapView(
     }
 }
 
-private fun updateMapContent(
+/**
+ * Renders complete Multi-User Real-time tracking layout matching user reference screenshot (Image 2):
+ * - Start callout card: [City] Start (Green concentric marker)
+ * - Destination callout card: [City] Destination (Red pin marker)
+ * - Thick Royal Blue route polyline
+ * - Custom circular badges for each traveler along the route with vehicle icon and name callout
+ * - Dashed black line connecting consecutive travelers with in-between distance badge (e.g. 5.2 km, 8.6 km)
+ */
+private fun renderGoogleMapContent(
+    context: Context,
     map: GoogleMap,
     srcName: String,
     srcLat: Double,
@@ -246,115 +296,337 @@ private fun updateMapContent(
     members: List<TripMember>
 ) {
     map.clear()
+    val density = context.resources.displayMetrics.density
     val boundsBuilder = LatLngBounds.Builder()
     var hasPoints = false
 
-    // 1. Start Point Marker (Green)
     val srcLatLng = LatLng(srcLat, srcLng)
+    val dstLatLng = LatLng(dstLat, dstLng)
+
+    // 1. Start Callout Marker (Bengaluru Start from Image 2)
+    val startCity = srcName.split(",").firstOrNull()?.trim() ?: "Start"
     map.addMarker(
         MarkerOptions()
             .position(srcLatLng)
-            .title(srcName)
-            .snippet("Start Location")
-            .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN))
+            .icon(createCalloutMarkerBitmap(startCity, "Start", isStart = true, density = density))
+            .anchor(0.5f, 0.9f)
     )
     boundsBuilder.include(srcLatLng)
     hasPoints = true
 
-    // 2. Destination Marker (Red)
-    val dstLatLng = LatLng(dstLat, dstLng)
+    // 2. Destination Callout Marker (Coorg Destination from Image 2)
+    val destCity = dstName.split(",").firstOrNull()?.trim() ?: "Destination"
     map.addMarker(
         MarkerOptions()
             .position(dstLatLng)
-            .title(dstName)
-            .snippet("Destination")
-            .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED))
+            .icon(createCalloutMarkerBitmap(destCity, "Destination", isStart = false, density = density))
+            .anchor(0.5f, 0.9f)
     )
     boundsBuilder.include(dstLatLng)
 
-    // 3. Current User Location Marker (Google Blue)
-    val userLatLng = LatLng(currLat, currLng)
-    map.addMarker(
-        MarkerOptions()
-            .position(userLatLng)
-            .title("You (Live)")
-            .snippet("Current GPS Position")
-            .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
-    )
-    boundsBuilder.include(userLatLng)
-
-    // 4. Primary Route Polyline (Start to Destination)
+    // 3. Main Route Polyline (Thick vibrant blue from Image 2)
     map.addPolyline(
         PolylineOptions()
             .add(srcLatLng, dstLatLng)
-            .width(10f)
+            .width(12f)
             .color(android.graphics.Color.parseColor("#1A73E8"))
             .geodesic(true)
     )
 
-    // 5. Trip Members Markers & In-between User Connection Polylines
-    val colors = listOf(
-        BitmapDescriptorFactory.HUE_ORANGE,
-        BitmapDescriptorFactory.HUE_VIOLET,
-        BitmapDescriptorFactory.HUE_YELLOW,
-        BitmapDescriptorFactory.HUE_CYAN,
-        BitmapDescriptorFactory.HUE_ROSE
+    // 4. Multi-User Tracking along the Route (Exact match to Image 2)
+    val travelerColors = listOf(
+        "#1A73E8", // Blue for You / User 1
+        "#E91E63", // Pink for Netra / User 2
+        "#FF9800", // Orange for Karuna / User 3
+        "#9C27B0", // Purple for Divakar / User 4
+        "#00897B", // Teal for User 5
+        "#7CB342"  // Green for User 6
     )
 
-    members.forEachIndexed { index, member ->
-        val mLat = member.latitude ?: (srcLat + (index + 1) * 0.015)
-        val mLng = member.longitude ?: (srcLng + (index + 1) * 0.012)
-        val memberLatLng = LatLng(mLat, mLng)
+    // Deduplicate members so each user appears once
+    val cleanMembers = deduplicateMemberList(members)
 
-        val distFromUserKm = haversineDistanceKm(currLat, currLng, mLat, mLng)
-        val speed = member.speedKmh ?: (35.0 + (index * 5))
-        val battery = member.batteryPercent ?: (85 + (index * 3) % 15)
+    // Calculate positions along the route if individual coordinates are identical or missing
+    val travelerPositions = mutableListOf<Pair<TripMember, LatLng>>()
 
-        val hue = colors[index % colors.size]
+    cleanMembers.forEachIndexed { index, member ->
+        val rawLat = member.latitude
+        val rawLng = member.longitude
+
+        val latLng = if (rawLat != null && rawLng != null && (rawLat != srcLat || rawLng != srcLng)) {
+            LatLng(rawLat, rawLng)
+        } else {
+            // Interpolate along route between start and destination
+            val ratio = if (cleanMembers.size > 1) {
+                0.20 + (index.toDouble() / (cleanMembers.size.toDouble())) * 0.60
+            } else 0.40
+            LatLng(
+                srcLat + (dstLat - srcLat) * ratio,
+                srcLng + (dstLng - srcLng) * ratio
+            )
+        }
+        travelerPositions.add(Pair(member, latLng))
+        boundsBuilder.include(latLng)
+
+        val isYou = index == 0 // First traveler is the active user
+        val colorHex = travelerColors[index % travelerColors.size]
+
+        // Add Custom Circular Traveler Marker with Name and Vehicle icon (Image 2)
         map.addMarker(
             MarkerOptions()
-                .position(memberLatLng)
-                .title(member.name)
-                .snippet("${formatDistance(distFromUserKm)} from You | ${speed.toInt()} km/h | 🔋 $battery%")
-                .icon(BitmapDescriptorFactory.defaultMarker(hue))
-        )
-        boundsBuilder.include(memberLatLng)
-
-        // Draw dotted/dashed line connecting user to member
-        map.addPolyline(
-            PolylineOptions()
-                .add(userLatLng, memberLatLng)
-                .width(6f)
-                .color(android.graphics.Color.parseColor("#4285F4"))
-                .pattern(listOf(Dash(20f), Gap(15f)))
+                .position(latLng)
+                .icon(
+                    createTravelerBadgeBitmap(
+                        name = member.name.substringBefore("@"),
+                        isYou = isYou,
+                        colorHex = colorHex,
+                        vehicleType = "BIKE",
+                        density = density
+                    )
+                )
+                .anchor(0.5f, 0.95f)
         )
     }
 
-    // Connect members in sequence to show in-between path
-    if (members.size >= 2) {
-        for (i in 0 until members.size - 1) {
-            val m1Lat = members[i].latitude ?: (srcLat + (i + 1) * 0.015)
-            val m1Lng = members[i].longitude ?: (srcLng + (i + 1) * 0.012)
-            val m2Lat = members[i + 1].latitude ?: (srcLat + (i + 2) * 0.015)
-            val m2Lng = members[i + 1].longitude ?: (srcLng + (i + 2) * 0.012)
+    // 5. Consecutive Dashed Connections with Distance Labels (5.2 km, 8.6 km from Image 2)
+    if (travelerPositions.size >= 2) {
+        for (i in 0 until travelerPositions.size - 1) {
+            val p1 = travelerPositions[i].second
+            val p2 = travelerPositions[i + 1].second
 
+            val distKm = haversineDistanceKm(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
+
+            // Draw dashed line connecting consecutive travelers (Black dashed line from Image 2)
             map.addPolyline(
                 PolylineOptions()
-                    .add(LatLng(m1Lat, m1Lng), LatLng(m2Lat, m2Lng))
+                    .add(p1, p2)
                     .width(4f)
-                    .color(android.graphics.Color.parseColor("#9333EA"))
-                    .pattern(listOf(Dot(), Gap(10f)))
+                    .color(android.graphics.Color.BLACK)
+                    .pattern(listOf(Dash(16f), Gap(12f)))
+            )
+
+            // Midpoint distance badge (e.g. 5.2 km, 8.6 km)
+            val midLat = (p1.latitude + p2.latitude) / 2.0
+            val midLng = (p1.longitude + p2.longitude) / 2.0
+            val midLatLng = LatLng(midLat, midLng)
+
+            map.addMarker(
+                MarkerOptions()
+                    .position(midLatLng)
+                    .icon(createDistanceLabelBitmap(distKm, density))
+                    .anchor(0.5f, 0.5f)
             )
         }
     }
 
-    // Animate camera to fit all participants
+    // Animate camera to include all markers
     try {
         if (hasPoints) {
             val bounds = boundsBuilder.build()
-            map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 120))
+            map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, (80 * density).toInt()))
         }
     } catch (_: Exception) {
-        map.animateCamera(CameraUpdateFactory.newLatLngZoom(userLatLng, 13f))
+        map.animateCamera(CameraUpdateFactory.newLatLngZoom(srcLatLng, 10f))
     }
+}
+
+/**
+ * Creates custom traveler circular marker matching Image 2:
+ * - Name above: "[Name]" or "[Name] (You)"
+ * - Circular colored ring with vehicle icon inside
+ * - Colored anchor dot pointing to route line
+ */
+private fun createTravelerBadgeBitmap(
+    name: String,
+    isYou: Boolean,
+    colorHex: String,
+    vehicleType: String,
+    density: Float
+): BitmapDescriptor {
+    val width = (110 * density).toInt()
+    val height = (74 * density).toInt()
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    val centerX = width / 2f
+
+    // 1. Name label above
+    val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.BLACK
+        textSize = 12f * density
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+    val displayName = if (isYou) "$name (You)" else name
+    canvas.drawText(displayName, centerX, 14f * density, namePaint)
+
+    // 2. Circular Badge
+    val badgeRadius = 18f * density
+    val badgeCenterY = 40f * density
+
+    // Outer white border
+    val whitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        style = Paint.Style.FILL
+    }
+    canvas.drawCircle(centerX, badgeCenterY, badgeRadius + 2.5f * density, whitePaint)
+
+    // Colored ring
+    val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.parseColor(colorHex)
+        style = Paint.Style.FILL
+    }
+    canvas.drawCircle(centerX, badgeCenterY, badgeRadius, ringPaint)
+
+    // Inner white circle
+    val innerWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        style = Paint.Style.FILL
+    }
+    canvas.drawCircle(centerX, badgeCenterY, badgeRadius - 3.5f * density, innerWhite)
+
+    // Vehicle icon / emoji text
+    val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 15f * density
+        textAlign = Paint.Align.CENTER
+    }
+    val icon = when (vehicleType.uppercase()) {
+        "CYCLE", "BICYCLE" -> "🚲"
+        "CAR" -> "🚗"
+        else -> "🏍️"
+    }
+    canvas.drawText(icon, centerX, badgeCenterY + 5.5f * density, iconPaint)
+
+    // 3. Anchor dot at bottom (on the polyline)
+    val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.parseColor(colorHex)
+        style = Paint.Style.FILL
+    }
+    canvas.drawCircle(centerX, 67f * density, 4.5f * density, dotPaint)
+    canvas.drawCircle(centerX, 67f * density, 2f * density, whitePaint)
+
+    return BitmapDescriptorFactory.fromBitmap(bitmap)
+}
+
+/**
+ * Creates in-between distance pill label matching Image 2 (e.g. "5.2 km"):
+ * - Clean white rounded rectangle with dark border
+ * - Exact distance text
+ */
+private fun createDistanceLabelBitmap(distanceKm: Double, density: Float): BitmapDescriptor {
+    val text = formatDistance(distanceKm)
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.BLACK
+        textSize = 11f * density
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+
+    val textWidth = textPaint.measureText(text)
+    val padX = 8f * density
+    val padY = 4f * density
+    val width = (textWidth + padX * 2).toInt().coerceAtLeast((36 * density).toInt())
+    val height = (16 * density + padY * 2).toInt()
+
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    val rect = RectF(1.5f * density, 1.5f * density, width - 1.5f * density, height - 1.5f * density)
+
+    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        style = Paint.Style.FILL
+    }
+    val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.parseColor("#64748B")
+        style = Paint.Style.STROKE
+        strokeWidth = 1f * density
+    }
+    canvas.drawRoundRect(rect, 8f * density, 8f * density, bgPaint)
+    canvas.drawRoundRect(rect, 8f * density, 8f * density, borderPaint)
+
+    canvas.drawText(text, width / 2f, height / 2f + 4f * density, textPaint)
+    return BitmapDescriptorFactory.fromBitmap(bitmap)
+}
+
+/**
+ * Creates Start & Destination Callout marker matching Image 2:
+ * - White callout rounded box with [City Name] and [Start / Destination]
+ * - Green/Red pin anchor
+ */
+private fun createCalloutMarkerBitmap(
+    title: String,
+    subtitle: String,
+    isStart: Boolean,
+    density: Float
+): BitmapDescriptor {
+    val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.BLACK
+        textSize = 12f * density
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+    val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = if (isStart) android.graphics.Color.parseColor("#16A34A") else android.graphics.Color.parseColor("#DC2626")
+        textSize = 10f * density
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+
+    val maxTextWidth = max(titlePaint.measureText(title), subPaint.measureText(subtitle))
+    val width = (maxTextWidth + 24f * density).toInt().coerceAtLeast((90 * density).toInt())
+    val height = (58 * density).toInt()
+
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    val centerX = width / 2f
+
+    // 1. Callout Box
+    val boxRect = RectF(2f * density, 2f * density, width - 2f * density, 36f * density)
+    val boxBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        style = Paint.Style.FILL
+    }
+    val boxBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.parseColor("#CBD5E1")
+        style = Paint.Style.STROKE
+        strokeWidth = 1f * density
+    }
+    canvas.drawRoundRect(boxRect, 8f * density, 8f * density, boxBg)
+    canvas.drawRoundRect(boxRect, 8f * density, 8f * density, boxBorder)
+
+    canvas.drawText(title, centerX, 16f * density, titlePaint)
+    canvas.drawText(subtitle, centerX, 30f * density, subPaint)
+
+    // 2. Anchor Pin below callout
+    val pinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = if (isStart) android.graphics.Color.parseColor("#16A34A") else android.graphics.Color.parseColor("#DC2626")
+        style = Paint.Style.FILL
+    }
+    val whitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        style = Paint.Style.FILL
+    }
+
+    canvas.drawCircle(centerX, 48f * density, 7f * density, pinPaint)
+    canvas.drawCircle(centerX, 48f * density, 3.2f * density, whitePaint)
+
+    return BitmapDescriptorFactory.fromBitmap(bitmap)
+}
+
+/**
+ * Deduplicates trip members by normalized username or ID so each user only appears ONCE.
+ */
+private fun deduplicateMemberList(members: List<TripMember>): List<TripMember> {
+    val seen = mutableSetOf<String>()
+    val result = mutableListOf<TripMember>()
+    for (m in members) {
+        val cleanName = m.name.trim().lowercase().substringBefore("@")
+        val key = if (cleanName.isNotBlank()) cleanName else m.id.trim().lowercase()
+        if (seen.add(key)) {
+            result.add(m)
+        }
+    }
+    return result
 }
