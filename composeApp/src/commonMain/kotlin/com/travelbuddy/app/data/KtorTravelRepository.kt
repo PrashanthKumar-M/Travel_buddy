@@ -8,6 +8,7 @@ import com.travelbuddy.app.domain.TripStatus
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -56,6 +57,11 @@ class KtorTravelRepository(
         }
         response.requireSuccess()
         response.bodyAsText().toTripOrFallback(request)
+    }
+
+    override suspend fun deleteTrip(tripId: String): Result<Boolean> = runCatching {
+        val response = client.delete(config.deleteTripEndpoint(tripId))
+        response.status.isSuccess()
     }
 
     override suspend fun joinTrip(tripCode: String, userId: String, userName: String): Result<Trip> = runCatching {

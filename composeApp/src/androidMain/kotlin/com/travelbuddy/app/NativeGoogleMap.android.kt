@@ -346,19 +346,33 @@ private fun renderGoogleMapContent(
     // Deduplicate members so each user appears once
     val cleanMembers = deduplicateMemberList(members)
 
-    // Calculate positions along the route if individual coordinates are identical or missing
+    // Calculate positions along the route with collision avoidance so markers never overlap
     val travelerPositions = mutableListOf<Pair<TripMember, LatLng>>()
+    val memberCount = cleanMembers.size
+    val minGapKm = 14.0
 
     cleanMembers.forEachIndexed { index, member ->
         val rawLat = member.latitude
         val rawLng = member.longitude
 
-        val latLng = if (rawLat != null && rawLng != null && (rawLat != srcLat || rawLng != srcLng)) {
-            LatLng(rawLat, rawLng)
+        val hasValidCoords = rawLat != null && rawLng != null && (rawLat != srcLat || rawLng != srcLng)
+        val latLng = if (hasValidCoords) {
+            val prevPoint = travelerPositions.lastOrNull()?.second
+            if (prevPoint != null && haversineDistanceKm(prevPoint.latitude, prevPoint.longitude, rawLat!!, rawLng!!) < minGapKm) {
+                val ratio = if (memberCount > 1) {
+                    0.18 + (index.toDouble() / memberCount.toDouble()) * 0.65
+                } else 0.40
+                LatLng(
+                    srcLat + (dstLat - srcLat) * ratio,
+                    srcLng + (dstLng - srcLng) * ratio
+                )
+            } else {
+                LatLng(rawLat!!, rawLng!!)
+            }
         } else {
-            // Interpolate along route between start and destination
-            val ratio = if (cleanMembers.size > 1) {
-                0.20 + (index.toDouble() / (cleanMembers.size.toDouble())) * 0.60
+            // Space along route between start (18%) and destination (85%)
+            val ratio = if (memberCount > 1) {
+                0.18 + (index.toDouble() / memberCount.toDouble()) * 0.65
             } else 0.40
             LatLng(
                 srcLat + (dstLat - srcLat) * ratio,
@@ -371,7 +385,7 @@ private fun renderGoogleMapContent(
         val isYou = index == 0 // First traveler is the active user
         val colorHex = travelerColors[index % travelerColors.size]
 
-        // Add Custom Circular Traveler Marker with Name and Vehicle icon (Image 2)
+        // Add Custom Circular Traveler Marker with Name Capsule Pill and Vehicle icon (Image 2)
         map.addMarker(
             MarkerOptions()
                 .position(latLng)
@@ -443,22 +457,45 @@ private fun createTravelerBadgeBitmap(
     vehicleType: String,
     density: Float
 ): BitmapDescriptor {
-    val width = (110 * density).toInt()
+    val displayName = if (isYou) "$name (You)" else name
+
+    val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.parseColor("#0F172A")
+        textSize = 11.5f * density
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+
+    val textWidth = namePaint.measureText(displayName)
+    val pillPadX = 8f * density
+    val pillWidth = textWidth + pillPadX * 2
+    val width = (max(pillWidth + 10f * density, 110f * density)).toInt()
     val height = (74 * density).toInt()
+
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
 
     val centerX = width / 2f
 
-    // 1. Name label above
-    val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.BLACK
-        textSize = 12f * density
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        textAlign = Paint.Align.CENTER
+    // 1. Name capsule pill card above (Crisp white rounded pill with subtle border)
+    val pillRect = RectF(
+        centerX - textWidth / 2f - pillPadX,
+        2f * density,
+        centerX + textWidth / 2f + pillPadX,
+        20f * density
+    )
+    val pillBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        style = Paint.Style.FILL
     }
-    val displayName = if (isYou) "$name (You)" else name
-    canvas.drawText(displayName, centerX, 14f * density, namePaint)
+    val pillBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.parseColor(if (isYou) "#1A73E8" else "#64748B")
+        style = Paint.Style.STROKE
+        strokeWidth = 1.2f * density
+    }
+    canvas.drawRoundRect(pillRect, 9f * density, 9f * density, pillBg)
+    canvas.drawRoundRect(pillRect, 9f * density, 9f * density, pillBorder)
+    canvas.drawText(displayName, centerX, 15.5f * density, namePaint)
 
     // 2. Circular Badge
     val badgeRadius = 18f * density

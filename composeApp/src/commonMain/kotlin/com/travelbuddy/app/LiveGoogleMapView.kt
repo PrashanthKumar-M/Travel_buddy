@@ -218,67 +218,6 @@ fun LiveGoogleMapView(
                     }
                 }
             }
-
-            // 2. In-Between Users Live Distances Strip (floating across the bottom)
-            if (members.isNotEmpty()) {
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    color = (if (darkMode) Color(0xFF0F172A) else Color.White).copy(alpha = 0.95f),
-                    shadowElevation = 4.dp,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, if (darkMode) Color(0xFF334155) else Color(0xFFE2E8F0))
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-                        Text(
-                            "Live Member Distances (${members.size} active)",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1A73E8)
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            members.forEachIndexed { index, m ->
-                                val mLat = m.latitude ?: (resolvedSrcLat + (index + 1) * 0.015)
-                                val mLng = m.longitude ?: (resolvedSrcLng + (index + 1) * 0.012)
-                                val distKm = haversineDistanceKm(activeUserLat, activeUserLng, mLat, mLng)
-
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (darkMode) Color(0xFF1E293B) else Color(0xFFF1F5F9),
-                                    border = androidx.compose.foundation.BorderStroke(0.6.dp, Color(m.color))
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(m.color))
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(
-                                            "${m.name.take(8)}: ${formatDistance(distKm)}",
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (darkMode) Color.White else Color(0xFF1E293B)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

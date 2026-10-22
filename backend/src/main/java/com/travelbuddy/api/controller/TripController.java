@@ -37,6 +37,16 @@ public class TripController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    @DeleteMapping("/{tripId}")
+    public ResponseEntity<?> deleteTrip(@PathVariable String tripId) {
+        boolean deleted = stateService.deleteTrip(tripId);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Trip deleted successfully",
+                "deleted", deleted
+        ));
+    }
+
     @GetMapping("/{tripId}/live")
     public ResponseEntity<?> getLiveSnapshot(@PathVariable String tripId) {
         return stateService.getTrip(tripId)

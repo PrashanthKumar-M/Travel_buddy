@@ -20,6 +20,7 @@ data class TravelApiConfig(
     fun updateLocationEndpoint() = "$api/locations"
     fun addExpenseEndpoint() = "$api/expenses"
     fun tripsEndpoint() = "$api/trips"
+    fun deleteTripEndpoint(tripId: String) = "$api/trips/$tripId"
     fun expensesEndpoint(tripId: String) = "$api/expenses?tripId=$tripId"
     fun chatMessagesEndpoint(tripId: String) = "$api/chat/$tripId/messages"
     fun sendChatMessageEndpoint(tripId: String) = "$api/chat/$tripId/messages"
@@ -84,6 +85,7 @@ interface TravelRepository {
     suspend fun requestOtp(phone: String? = null, email: String? = null): Result<String?>
     suspend fun verifyOtp(request: OtpVerificationRequest): Result<Unit>
     suspend fun getTrips(): Result<List<Trip>>
+    suspend fun deleteTrip(tripId: String): Result<Boolean>
     suspend fun createTrip(request: CreateTripRequest): Result<Trip>
     suspend fun joinTrip(tripCode: String, userId: String = "usr-1", userName: String = "Traveler"): Result<Trip>
     suspend fun liveSnapshot(tripId: String): Result<Trip>

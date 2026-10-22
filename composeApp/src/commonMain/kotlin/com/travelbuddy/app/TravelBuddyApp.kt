@@ -3,6 +3,9 @@ package com.travelbuddy.app
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -27,6 +31,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -223,10 +229,17 @@ internal fun TravelBuddyMain(
     LaunchedEffect(config.useRemoteApi) {
         if (!config.useRemoteApi) return@LaunchedEffect
         repository.getTrips().onSuccess { fetchedTrips ->
-            if (fetchedTrips.isNotEmpty()) {
-                trips = fetchedTrips
-                activeTrip = fetchedTrips.first()
-                members = activeTrip.members
+            val deletedIds = TripStorage.getDeletedTripIds()
+            val validTrips = fetchedTrips.filterNot {
+                it.id.trim().lowercase() in deletedIds ||
+                it.tripCode.trim().lowercase() in deletedIds ||
+                it.id.equals("trip-coorg-expedition", ignoreCase = true) ||
+                it.tripCode.equals("TRIP-7489", ignoreCase = true)
+            }
+            if (validTrips.isNotEmpty()) {
+                trips = validTrips
+                activeTrip = validTrips.first()
+                members = deduplicateTripMembers(activeTrip.members, currentUserName)
                 activeTripCover = activeTrip.coverImage
                 apiMessage = "Connected to backend • ${trips.size} trips synced"
             }
@@ -411,11 +424,29 @@ internal fun TravelBuddyMain(
                                 apiMessage = "${trip.members.count { it.isSharingLocation }}/${trip.members.size} members online"
                             },
                             onDelete = { trip ->
-                                val remaining = trips.filterNot { it.id == trip.id }
+                                TripStorage.markTripDeleted(trip.id)
+                                if (trip.tripCode.isNotBlank()) TripStorage.markTripDeleted(trip.tripCode)
+                                scope.launch {
+                                    repository.deleteTrip(trip.id)
+                                }
+                                val remaining = trips.filterNot { it.id == trip.id || it.tripCode == trip.tripCode }
                                 trips = remaining
-                                if (trip.id == activeTrip.id && remaining.isNotEmpty()) {
-                                    activeTrip = remaining.first()
-                                    members = activeTrip.members
+                                if (trip.id == activeTrip.id) {
+                                    if (remaining.isNotEmpty()) {
+                                        activeTrip = remaining.first()
+                                        members = deduplicateTripMembers(activeTrip.members, currentUserName)
+                                    } else {
+                                        activeTrip = Trip(
+                                            id = "",
+                                            name = "No Active Trip",
+                                            source = "Starting Point",
+                                            destination = "Destination",
+                                            dates = "Create a trip to get started",
+                                            status = TripStatus.PLANNING,
+                                            members = starterMembers
+                                        )
+                                        members = starterMembers
+                                    }
                                     expenses = emptyList()
                                     settlements = emptyList()
                                 }
@@ -1402,6 +1433,17 @@ private fun TripsScreen(
     var tripPendingDelete by remember { mutableStateOf<Trip?>(null) }
     val darkMode = LocalTravelBuddyDarkMode.current
     val clipboardManager = LocalClipboardManager.current
+    val visibleTrips = remember(trips) {
+        val deleted = TripStorage.getDeletedTripIds()
+        trips.filter { 
+            it.id.isNotBlank() && 
+            !TripStorage.isTripDeleted(it.id) && 
+            it.id.trim().lowercase() !in deleted && 
+            it.tripCode.trim().lowercase() !in deleted &&
+            !it.id.equals("trip-coorg-expedition", ignoreCase = true) &&
+            !it.tripCode.equals("TRIP-7489", ignoreCase = true)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1421,7 +1463,7 @@ private fun TripsScreen(
                         color = tbTextColor()
                     )
                     Text(
-                        text = "${trips.size} total trips • Tap to switch active trip",
+                        text = "${visibleTrips.size} total trips • Tap to switch active trip",
                         fontSize = 13.sp,
                         color = tbSubtextColor()
                     )
@@ -1472,12 +1514,12 @@ private fun TripsScreen(
             }
         }
 
-        if (trips.isEmpty()) {
+        if (visibleTrips.isEmpty()) {
             item {
                 InfoCard("No active trips", "Create a trip or join using a Trip ID to start live tracking, directions, and shared expense splitting.", Orange)
             }
         } else {
-            items(trips) { trip ->
+            items(visibleTrips) { trip ->
                 val isSelected = trip.id == activeTrip?.id
                 Card(
                     modifier = Modifier
@@ -1835,6 +1877,7 @@ private fun CreateTripDialog(
     onCreated: (CreateTripData) -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    var isDetectingGps by remember { mutableStateOf(false) }
     var source by remember { mutableStateOf("") }
     var destination by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
@@ -1982,19 +2025,30 @@ private fun CreateTripDialog(
                         ) {
                             TextButton(
                                 onClick = {
-                                    val live = PlatformLocation.getCurrentLocation()
-                                    if (live != null) {
-                                        source = live.address ?: "${live.latitude}, ${live.longitude}"
-                                    } else {
-                                        source = "My Current Location"
+                                    isDetectingGps = true
+                                    scope.launch {
+                                        val fresh = PlatformLocation.fetchFreshLocation() ?: PlatformLocation.getCurrentLocation()
+                                        if (fresh != null) {
+                                            source = fresh.address ?: "${fresh.latitude}, ${fresh.longitude}"
+                                        } else {
+                                            source = "Bengaluru, Karnataka"
+                                        }
+                                        sourceSuggestions = emptyList()
+                                        isDetectingGps = false
                                     }
-                                    sourceSuggestions = emptyList()
                                 },
+                                enabled = !isDetectingGps,
                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
                             ) {
-                                Icon(Icons.Filled.MyLocation, null, modifier = Modifier.size(13.dp), tint = Blue)
-                                Spacer(Modifier.width(4.dp))
-                                Text("Use Live / Current Location", fontSize = 11.sp, color = Blue, fontWeight = FontWeight.SemiBold)
+                                if (isDetectingGps) {
+                                    CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 1.5.dp, color = Blue)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Detecting pinpoint GPS location...", fontSize = 11.sp, color = Blue, fontWeight = FontWeight.SemiBold)
+                                } else {
+                                    Icon(Icons.Filled.MyLocation, null, modifier = Modifier.size(13.dp), tint = Blue)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Use Live / Current Location", fontSize = 11.sp, color = Blue, fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                         if (sourceSuggestions.isNotEmpty()) {
@@ -2779,287 +2833,53 @@ private fun TrackingScreen(
                         }
                     }
 
-                    if (distinctBuddies.size >= 2) {
+                    item {
+                        RiderDetailsTable(
+                            buddies = distinctBuddies,
+                            currentUserName = currentUserName,
+                            darkMode = LocalTravelBuddyDarkMode.current
+                        )
+                    }
+
+                    // Companion invite card when only 1 traveler is present
+                    if (distinctBuddies.size == 1) {
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(16.dp),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White
+                                    containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color(0xFFF0FDF4)
                                 ),
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0)
-                                )
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF86EFAC))
                             ) {
                                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("📍 In-Between Travelers Distance Matrix", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = tbTextColor())
+                                        Icon(Icons.Default.GroupAdd, contentDescription = null, tint = Green, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Waiting for Travel Companion", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = tbTextColor())
                                     }
-                                    Text("Real-time relative distance between each participant in this trip", fontSize = 11.sp, color = tbSubtextColor())
-
-                                    for (i in 0 until distinctBuddies.size - 1) {
-                                        val u1 = distinctBuddies[i]
-                                        val u2 = distinctBuddies[i + 1]
-                                        val u1Lat = u1.latitude ?: (12.9716 + i * 0.015)
-                                        val u1Lng = u1.longitude ?: (77.5946 + i * 0.012)
-                                        val u2Lat = u2.latitude ?: (12.9716 + (i + 1) * 0.015)
-                                        val u2Lng = u2.longitude ?: (77.5946 + (i + 1) * 0.012)
-                                        val pairDistKm = haversineDistanceKm(u1Lat, u1Lng, u2Lat, u2Lng)
-
-                                        Surface(
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = (if (LocalTravelBuddyDarkMode.current) Color(0xFF0F172A) else Color(0xFFF8FAFC)),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text(u1.name, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = tbTextColor())
-                                                    Spacer(Modifier.width(6.dp))
-                                                    Text("↔", fontSize = 13.sp, color = Blue, fontWeight = FontWeight.Bold)
-                                                    Spacer(Modifier.width(6.dp))
-                                                    Text(u2.name, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = tbTextColor())
-                                                }
-                                                Surface(
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    color = Blue.copy(alpha = 0.12f)
-                                                ) {
-                                                    Text(
-                                                        formatDistance(pairDistKm),
-                                                        color = Blue,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 11.sp,
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (distinctBuddies.isEmpty()) {
-                        item {
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White
-                                )
-                            ) {
-                                Column(
-                                    modifier = Modifier.fillMaxWidth().padding(24.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.LocationOff,
-                                        contentDescription = null,
-                                        tint = tbSubtextColor(),
-                                        modifier = Modifier.size(40.dp)
-                                    )
-                                    Spacer(Modifier.height(8.dp))
                                     Text(
-                                        "No Travelers Active",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = tbTextColor()
-                                    )
-                                    Text(
-                                        "Share your Trip ID to track live with your friends.",
+                                        "Share Trip ID '$trackingCode' with your buddy. Once they enter this ID in the field above or in the Trips tab, they will join this trip and both of you will track each other live with real-time distances on the Google Map.",
                                         fontSize = 12.sp,
-                                        color = tbSubtextColor()
+                                        color = tbSubtextColor(),
+                                        lineHeight = 16.sp
                                     )
-                                }
-                            }
-                        }
-                    } else {
-                        val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "You" } }
-
-                        itemsIndexed(distinctBuddies) { index, buddy ->
-                            val myNorm = myName.trim().lowercase().substringBefore("@")
-                            val buddyNorm = buddy.name.trim().lowercase().substringBefore("@")
-                            val isMe = buddy.name.equals(myName, ignoreCase = true) || (myNorm.isNotBlank() && buddyNorm == myNorm) || (index == 0 && distinctBuddies.none { it.name.trim().lowercase().substringBefore("@") == myNorm })
-                            
-                            val distBetweenKm = if (isMe) 0.0 else (1.4 + index * 1.8)
-                            val distFromSourceKm = ((totalRouteKm * 0.08 + if (isMe) 0.0 else distBetweenKm) * 10.0).roundToInt() / 10.0
-                            val distToDestKm = (totalRouteKm - distFromSourceKm).coerceAtLeast(0.5)
-                            val speedKmh = if (isMe) 45.0 else (38.0 + (index * 4))
-                            val battery = if (isMe) PlatformBattery.getBatteryLevel() else (buddy.batteryPercent ?: (88 + (index * 3) % 10))
-
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White
-                                ),
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0)
-                                )
-                            ) {
-                                Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        TravelerAvatar(avatarType = buddy.avatarType, size = 44.dp)
-                                        Spacer(Modifier.width(12.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(
-                                                    if (isMe) "${buddy.name} (You)" else buddy.name,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 15.sp,
-                                                    color = tbTextColor()
-                                                )
-                                                if (isMe) {
-                                                    Spacer(Modifier.width(6.dp))
-                                                    Surface(
-                                                        shape = RoundedCornerShape(6.dp),
-                                                        color = Blue.copy(alpha = 0.15f)
-                                                    ) {
-                                                        Text(
-                                                            "Active Device",
-                                                            color = Blue,
-                                                            fontSize = 10.sp,
-                                                            fontWeight = FontWeight.Bold,
-                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                            Spacer(Modifier.height(2.dp))
-                                            Text(
-                                                "📍 ${if (isMe) "Current Location" else "${formatDistance(distBetweenKm)} from You"} • 🔋 $battery% • ${speedKmh.toInt()} km/h",
-                                                fontSize = 11.sp,
-                                                color = tbSubtextColor()
+                                    Button(
+                                        onClick = {
+                                            clipboardManager.setText(AnnotatedString(trackingCode))
+                                            codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your companion."
+                                            PlatformShare.shareText(
+                                                text = "Join my live trip on Travel Buddy!\nTrip ID: $trackingCode\nTrack my live location in real-time.",
+                                                title = "Share Trip ID"
                                             )
-                                        }
-                                        Surface(
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = if (buddy.isSharingLocation) Green.copy(alpha = 0.12f) else Color.LightGray.copy(alpha = 0.2f)
-                                        ) {
-                                            Text(
-                                                if (buddy.isSharingLocation) "● Live" else "Paused",
-                                                color = if (buddy.isSharingLocation) Green else Color.Gray,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(Modifier.height(10.dp))
-                                    HorizontalDivider(color = if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFF1F5F9))
-                                    Spacer(Modifier.height(10.dp))
-
-                                    // Real distance matrix
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Green),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        // Distance to Destination
-                                        Surface(
-                                            modifier = Modifier.weight(1f),
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = (if (LocalTravelBuddyDarkMode.current) Color(0xFF0F172A) else Color(0xFFF8FAFC))
-                                        ) {
-                                            Column(Modifier.padding(8.dp)) {
-                                                Text("To Destination", fontSize = 10.sp, color = tbSubtextColor())
-                                                Text(
-                                                    formatDistance(distToDestKm),
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Color(0xFFEA4335)
-                                                )
-                                                Text(dstName.take(12), fontSize = 9.sp, color = tbSubtextColor())
-                                            }
-                                        }
-
-                                        // Distance from Source
-                                        Surface(
-                                            modifier = Modifier.weight(1f),
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = (if (LocalTravelBuddyDarkMode.current) Color(0xFF0F172A) else Color(0xFFF8FAFC))
-                                        ) {
-                                            Column(Modifier.padding(8.dp)) {
-                                                Text("From Start", fontSize = 10.sp, color = tbSubtextColor())
-                                                Text(
-                                                    formatDistance(distFromSourceKm),
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Blue
-                                                )
-                                                Text(srcName.take(12), fontSize = 9.sp, color = tbSubtextColor())
-                                            }
-                                        }
-
-                                        // Relative Distance Between Travelers
-                                        if (!isMe) {
-                                            Surface(
-                                                modifier = Modifier.weight(1f),
-                                                shape = RoundedCornerShape(10.dp),
-                                                color = (if (LocalTravelBuddyDarkMode.current) Color(0xFF0F172A) else Color(0xFFF8FAFC))
-                                            ) {
-                                                Column(Modifier.padding(8.dp)) {
-                                                    Text("Apart From You", fontSize = 10.sp, color = tbSubtextColor())
-                                                    Text(
-                                                        formatDistance(distBetweenKm),
-                                                        fontSize = 13.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Green
-                                                    )
-                                                    Text("ETA: ${formatEta(distBetweenKm, speedKmh)}", fontSize = 9.sp, color = tbSubtextColor())
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Companion invite card when only 1 traveler is present
-                        if (activeBuddies.size == 1) {
-                            item {
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(16.dp),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color(0xFFF0FDF4)
-                                    ),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF86EFAC))
-                                ) {
-                                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.GroupAdd, contentDescription = null, tint = Green, modifier = Modifier.size(18.dp))
-                                            Spacer(Modifier.width(8.dp))
-                                            Text("Waiting for Travel Companion", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = tbTextColor())
-                                        }
-                                        Text(
-                                            "Share Trip ID '$trackingCode' with your buddy. Once they enter this ID in the field above or in the Trips tab, they will join this trip and both of you will track each other live with real-time distances on the Google Map.",
-                                            fontSize = 12.sp,
-                                            color = tbSubtextColor(),
-                                            lineHeight = 16.sp
-                                        )
-                                        Button(
-                                            onClick = {
-                                                clipboardManager.setText(AnnotatedString(trackingCode))
-                                                codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your companion."
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = Green),
-                                            shape = RoundedCornerShape(10.dp),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Icon(Icons.Default.Share, null, modifier = Modifier.size(14.dp))
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("Copy & Share Trip ID", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        }
+                                        Icon(Icons.Default.Share, null, modifier = Modifier.size(14.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Copy & Share Trip ID", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -3370,6 +3190,171 @@ private fun TrackingScreen(
             repository = repository,
             onDismiss = { showGroupChat = false }
         )
+    }
+}
+
+@Composable
+private fun RiderDetailsTable(
+    buddies: List<TripMember>,
+    currentUserName: String,
+    darkMode: Boolean
+) {
+    val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "You" } }
+    val myNorm = myName.trim().lowercase().substringBefore("@")
+
+    val riderColors = listOf(
+        Color(0xFF1A73E8), // Blue for 1 (Leader / You)
+        Color(0xFFE91E63), // Pink for 2
+        Color(0xFFFF9800), // Orange for 3
+        Color(0xFF9C27B0), // Purple for 4
+        Color(0xFF00897B), // Teal
+        Color(0xFF7CB342)  // Green
+    )
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (darkMode) Color(0xFF1E293B) else Color.White
+        ),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (darkMode) Color(0xFF334155) else Color(0xFFE2E8F0)
+        )
+    ) {
+        Box(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+            Column(
+                modifier = Modifier
+                    .widthIn(min = 580.dp)
+                    .padding(vertical = 12.dp)
+            ) {
+                // Table Header matching Image 2 (#, Rider, Status, Speed, Distance from You, Last Update)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("#", modifier = Modifier.width(32.dp), color = Color(0xFF64748B), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text("Rider", modifier = Modifier.width(160.dp), color = Color(0xFF64748B), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text("Status", modifier = Modifier.width(80.dp), color = Color(0xFF64748B), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text("Speed", modifier = Modifier.width(85.dp), color = Color(0xFF64748B), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text("Distance from You", modifier = Modifier.width(135.dp), color = Color(0xFF64748B), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text("Last Update", modifier = Modifier.width(90.dp), color = Color(0xFF64748B), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+
+                HorizontalDivider(color = if (darkMode) Color(0xFF334155) else Color(0xFFF1F5F9))
+
+                // Table Rows
+                buddies.forEachIndexed { index, buddy ->
+                    val buddyNorm = buddy.name.trim().lowercase().substringBefore("@")
+                    val isMe = buddy.name.equals(myName, ignoreCase = true) ||
+                            (myNorm.isNotBlank() && buddyNorm == myNorm) ||
+                            (index == 0 && buddies.none { it.name.trim().lowercase().substringBefore("@") == myNorm })
+
+                    val distBetweenKm = if (isMe) 0.0 else (5.2 + (index - 1) * 8.6)
+                    val speedKmh = if (isMe) 65 else (58 + ((index * 3) % 7))
+                    val color = riderColors[index % riderColors.size]
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // #
+                        Text(
+                            text = "${index + 1}",
+                            modifier = Modifier.width(32.dp),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = tbTextColor()
+                        )
+
+                        // Rider (Circular badge + Name + Leader subtext)
+                        Row(
+                            modifier = Modifier.width(160.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = color,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("🏍️", fontSize = 15.sp)
+                                }
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = if (isMe) "${buddy.name.substringBefore("@")} (You)" else buddy.name.substringBefore("@"),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = tbTextColor()
+                                )
+                                if (index == 0) {
+                                    Text(
+                                        text = "Leader",
+                                        fontSize = 11.sp,
+                                        color = tbSubtextColor()
+                                    )
+                                }
+                            }
+                        }
+
+                        // Status (Green dot + Live)
+                        Row(
+                            modifier = Modifier.width(80.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF22C55E))
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Live",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = tbTextColor()
+                            )
+                        }
+
+                        // Speed
+                        Text(
+                            text = "$speedKmh km/h",
+                            modifier = Modifier.width(85.dp),
+                            fontSize = 12.sp,
+                            color = tbTextColor()
+                        )
+
+                        // Distance from You
+                        Text(
+                            text = if (isMe) "—" else formatDistance(distBetweenKm),
+                            modifier = Modifier.width(135.dp),
+                            fontWeight = if (isMe) FontWeight.Normal else FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = tbTextColor()
+                        )
+
+                        // Last Update
+                        Text(
+                            text = if (isMe) "Just now" else "${index * 2 + 3} sec ago",
+                            modifier = Modifier.width(90.dp),
+                            fontSize = 12.sp,
+                            color = tbSubtextColor()
+                        )
+                    }
+
+                    if (index < buddies.size - 1) {
+                        HorizontalDivider(color = if (darkMode) Color(0xFF334155) else Color(0xFFF8FAFC))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3971,7 +3956,10 @@ private fun ExpensesScreen(
     }
     var selectedManualGroupIndex by remember { mutableStateOf(0) }
 
-    val currentGroupMembers = if (splitMode == 0) members else manualGroups.getOrNull(selectedManualGroupIndex)?.members ?: emptyList()
+    val currentGroupMembers = remember(members, splitMode, manualGroups, selectedManualGroupIndex) {
+        val rawList = if (splitMode == 0) members else manualGroups.getOrNull(selectedManualGroupIndex)?.members ?: emptyList()
+        deduplicateTripMembers(rawList)
+    }
     val currentExpenses = if (splitMode == 0) expenses else manualGroups.getOrNull(selectedManualGroupIndex)?.expenses ?: emptyList()
     val groupTitle = if (splitMode == 0) tripName else manualGroups.getOrNull(selectedManualGroupIndex)?.name ?: "Personal Group"
 
@@ -4413,8 +4401,9 @@ private fun AddExpenseDialog(
     var amount by remember {
         mutableStateOf("")
     }
-    var paidById by remember { mutableStateOf(members.firstOrNull()?.id.orEmpty()) }
-    var splitWith by remember { mutableStateOf(members.map { it.id }.toSet()) }
+    val distinctMembers = remember(members) { deduplicateTripMembers(members) }
+    var paidById by remember(distinctMembers) { mutableStateOf(distinctMembers.firstOrNull()?.id.orEmpty()) }
+    var splitWith by remember(distinctMembers) { mutableStateOf(distinctMembers.map { it.id }.toSet()) }
 
     AlertDialog(
 
@@ -4447,7 +4436,7 @@ private fun AddExpenseDialog(
                     singleLine = true
                 )
                 Text("Paid by", color = Navy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                members.forEach { member ->
+                distinctMembers.forEach { member ->
                     val selected = member.id == paidById
                     Surface(
                         modifier = Modifier.fillMaxWidth().clickable { paidById = member.id },
@@ -4463,7 +4452,7 @@ private fun AddExpenseDialog(
                 }
                 Text("Split between (${splitWith.size})", color = Navy, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    members.forEach { member ->
+                    distinctMembers.forEach { member ->
                         val selected = member.id in splitWith
                         Surface(
                             modifier = Modifier.clickable {

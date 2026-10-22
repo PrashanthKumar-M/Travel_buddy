@@ -65,32 +65,7 @@ public class TravelBuddyStateService {
         );
         userProfiles.put("usr-1", p1);
 
-        // Seed initial Trip template
-        List<TripMember> members = new ArrayList<>();
-
-        String tripId = "trip-coorg-expedition";
-        String tripCode = "TRIP-7489";
-        Trip seededTrip = new Trip(
-                tripId,
-                "Western Ghats Expedition",
-                "Bangalore",
-                "Coorg Valley",
-                "18/10/2026 - 21/10/2026",
-                "LIVE",
-                tripCode,
-                "usr-1",
-                "https://images.unsplash.com/photo-1507525428034-b723cf961d3e",
-                members,
-                System.currentTimeMillis()
-        );
-        trips.put(tripId, seededTrip);
-        tripCodeToId.put(tripCode, tripId);
-
-        // Seed Initial Trip Chat
-        List<ChatMessage> chat = new CopyOnWriteArrayList<>();
-        tripChats.put(tripId, chat);
-
-        // Tracking Devices:
+        // Seed Tracking Devices (Vehicle GPS, Child Bag, Pet Tag)
         // 1. Vehicle GPS Tracker
         TrackingDevice bike = new TrackingDevice(
                 "dev-veh-1",
@@ -165,52 +140,53 @@ public class TravelBuddyStateService {
     // Simulates realistic highway motion every 4s and broadcasts via WebSocket
     @Scheduled(fixedRate = 4000)
     public void liveTrackingHeartbeat() {
-        Trip trip = trips.get("trip-coorg-expedition");
-        if (trip != null && "LIVE".equalsIgnoreCase(trip.status())) {
-            List<TripMember> updated = new ArrayList<>();
-            for (TripMember m : trip.members()) {
-                double driftLat = (Math.random() - 0.48) * 0.0003;
-                double driftLng = (Math.random() - 0.48) * 0.0003;
-                double speedVar = 38.0 + (Math.random() * 15.0);
-                double newLat = (m.latitude() != null ? m.latitude() : 12.9716) + driftLat;
-                double newLng = (m.longitude() != null ? m.longitude() : 77.5946) + driftLng;
+        for (Trip trip : trips.values()) {
+            if (trip != null && "LIVE".equalsIgnoreCase(trip.status()) && !trip.members().isEmpty()) {
+                List<TripMember> updated = new ArrayList<>();
+                for (TripMember m : trip.members()) {
+                    double driftLat = (Math.random() - 0.48) * 0.0003;
+                    double driftLng = (Math.random() - 0.48) * 0.0003;
+                    double speedVar = 38.0 + (Math.random() * 15.0);
+                    double newLat = (m.latitude() != null ? m.latitude() : 12.9716) + driftLat;
+                    double newLng = (m.longitude() != null ? m.longitude() : 77.5946) + driftLng;
 
-                TripMember updatedMember = new TripMember(
-                        m.id(),
-                        m.name(),
-                        m.color(),
-                        true,
-                        newLat,
-                        newLng,
-                        Math.round(speedVar * 10.0) / 10.0,
-                        m.batteryPercent() != null ? m.batteryPercent() : 90,
-                        System.currentTimeMillis()
-                );
-                updated.add(updatedMember);
-
-                // Broadcast live location event
-                if (webSocketBroadcastListener != null) {
-                    String json = String.format(
-                            Locale.US,
-                            "{\"type\":\"location\",\"tripId\":\"%s\",\"userId\":\"%s\",\"name\":\"%s\",\"latitude\":%.6f,\"longitude\":%.6f,\"speed\":%.1f,\"battery\":%d,\"timestamp\":%d}",
-                            trip.id(), m.id(), m.name(), newLat, newLng, speedVar, (m.batteryPercent() != null ? m.batteryPercent() : 90), System.currentTimeMillis()
+                    TripMember updatedMember = new TripMember(
+                            m.id(),
+                            m.name(),
+                            m.color(),
+                            true,
+                            newLat,
+                            newLng,
+                            Math.round(speedVar * 10.0) / 10.0,
+                            m.batteryPercent() != null ? m.batteryPercent() : 90,
+                            System.currentTimeMillis()
                     );
-                    webSocketBroadcastListener.accept(json);
+                    updated.add(updatedMember);
+
+                    // Broadcast live location event
+                    if (webSocketBroadcastListener != null) {
+                        String json = String.format(
+                                Locale.US,
+                                "{\"type\":\"location\",\"tripId\":\"%s\",\"userId\":\"%s\",\"name\":\"%s\",\"latitude\":%.6f,\"longitude\":%.6f,\"speed\":%.1f,\"battery\":%d,\"timestamp\":%d}",
+                                trip.id(), m.id(), m.name(), newLat, newLng, speedVar, (m.batteryPercent() != null ? m.batteryPercent() : 90), System.currentTimeMillis()
+                        );
+                        webSocketBroadcastListener.accept(json);
+                    }
                 }
+                trips.put(trip.id(), new Trip(
+                        trip.id(),
+                        trip.name(),
+                        trip.source(),
+                        trip.destination(),
+                        trip.dates(),
+                        trip.status(),
+                        trip.tripCode(),
+                        trip.createdBy(),
+                        trip.coverImage(),
+                        updated,
+                        trip.createdAt()
+                ));
             }
-            trips.put(trip.id(), new Trip(
-                    trip.id(),
-                    trip.name(),
-                    trip.source(),
-                    trip.destination(),
-                    trip.dates(),
-                    trip.status(),
-                    trip.tripCode(),
-                    trip.createdBy(),
-                    trip.coverImage(),
-                    updated,
-                    trip.createdAt()
-            ));
         }
     }
 
@@ -431,6 +407,34 @@ public class TravelBuddyStateService {
 
     public List<Trip> getAllTrips() {
         return new ArrayList<>(trips.values());
+    }
+
+    public boolean deleteTrip(String tripId) {
+        if (tripId == null || tripId.isBlank()) return false;
+        String cleanId = tripId.trim();
+
+        Trip removed = trips.remove(cleanId);
+        if (removed == null) {
+            // Also try by tripCode lookup
+            String mappedId = tripCodeToId.remove(cleanId);
+            if (mappedId == null) {
+                mappedId = tripCodeToId.remove(cleanId.toUpperCase());
+            }
+            if (mappedId != null) {
+                removed = trips.remove(mappedId);
+            }
+        }
+        if (removed != null) {
+            if (removed.tripCode() != null) {
+                tripCodeToId.remove(removed.tripCode());
+                tripCodeToId.remove(removed.tripCode().toUpperCase());
+            }
+            tripChats.remove(removed.id());
+            expenseGroups.remove("grp-" + removed.id());
+            groupExpenses.remove("grp-" + removed.id());
+            return true;
+        }
+        return false;
     }
 
     public Optional<Trip> joinTripByCode(String code, String userId, String userName) {

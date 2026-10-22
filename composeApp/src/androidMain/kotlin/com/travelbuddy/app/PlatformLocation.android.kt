@@ -9,7 +9,12 @@ import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.Locale
+import kotlin.coroutines.resume
 
 actual object PlatformLocation {
     var appContext: Context? = null
@@ -27,6 +32,12 @@ actual object PlatformLocation {
     private fun fetchCachedLocation() {
         val ctx = appContext ?: return
         try {
+            val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
+            fusedClient.lastLocation.addOnSuccessListener { loc ->
+                if (loc != null) {
+                    lastLocation = toRealLocation(loc)
+                }
+            }
             val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
             val gpsLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
             val netLoc = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
@@ -36,7 +47,7 @@ actual object PlatformLocation {
                 netLoc != null -> netLoc
                 else -> null
             }
-            if (bestLoc != null) {
+            if (bestLoc != null && lastLocation == null) {
                 lastLocation = toRealLocation(bestLoc)
             }
         } catch (_: Exception) {
@@ -48,6 +59,47 @@ actual object PlatformLocation {
             fetchCachedLocation()
         }
         return lastLocation
+    }
+
+    @SuppressLint("MissingPermission")
+    actual suspend fun fetchFreshLocation(): RealLocation? = suspendCancellableCoroutine { cont ->
+        val ctx = appContext
+        if (ctx == null) {
+            cont.resume(lastLocation)
+            return@suspendCancellableCoroutine
+        }
+        try {
+            val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
+            val cts = CancellationTokenSource()
+            cont.invokeOnCancellation { cts.cancel() }
+
+            fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
+                .addOnSuccessListener { loc ->
+                    if (loc != null) {
+                        val real = toRealLocation(loc)
+                        lastLocation = real
+                        if (cont.isActive) cont.resume(real)
+                    } else {
+                        // Fallback to fusedClient lastLocation
+                        fusedClient.lastLocation.addOnSuccessListener { fallbackLoc ->
+                            if (fallbackLoc != null) {
+                                val real = toRealLocation(fallbackLoc)
+                                lastLocation = real
+                                if (cont.isActive) cont.resume(real)
+                            } else {
+                                if (cont.isActive) cont.resume(lastLocation)
+                            }
+                        }.addOnFailureListener {
+                            if (cont.isActive) cont.resume(lastLocation)
+                        }
+                    }
+                }
+                .addOnFailureListener {
+                    if (cont.isActive) cont.resume(lastLocation)
+                }
+        } catch (_: Exception) {
+            if (cont.isActive) cont.resume(lastLocation)
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -116,13 +168,16 @@ actual object PlatformLocation {
             val matches = geocoder.getFromLocation(latitude, longitude, 1)
             if (!matches.isNullOrEmpty()) {
                 val addr = matches[0]
-                val street = addr.thoroughfare ?: addr.subLocality ?: addr.featureName
-                val city = addr.locality ?: addr.subAdminArea ?: addr.adminArea
+                val subLocality = addr.subLocality ?: addr.thoroughfare ?: addr.featureName
+                val locality = addr.locality ?: addr.subAdminArea ?: addr.adminArea
+                val fullAddress = addr.getAddressLine(0)
+
                 when {
-                    !street.isNullOrBlank() && !city.isNullOrBlank() -> "$street, $city"
-                    !street.isNullOrBlank() -> street
-                    !city.isNullOrBlank() -> city
-                    else -> addr.getAddressLine(0)
+                    !subLocality.isNullOrBlank() && !locality.isNullOrBlank() -> "$subLocality, $locality"
+                    !fullAddress.isNullOrBlank() -> fullAddress.split(",").take(2).joinToString(",").trim()
+                    !locality.isNullOrBlank() -> locality
+                    !subLocality.isNullOrBlank() -> subLocality
+                    else -> fullAddress
                 }
             } else null
         } catch (_: Exception) {

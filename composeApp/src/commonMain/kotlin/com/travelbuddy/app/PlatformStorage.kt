@@ -81,3 +81,25 @@ object SessionManager {
         PlatformStorage.clear()
     }
 }
+
+object TripStorage {
+    private const val KEY_DELETED_TRIP_IDS = "tb_deleted_trip_ids"
+
+    fun getDeletedTripIds(): Set<String> {
+        val raw = PlatformStorage.getString(KEY_DELETED_TRIP_IDS) ?: return emptySet()
+        return raw.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
+    }
+
+    fun markTripDeleted(tripId: String) {
+        val clean = tripId.trim().lowercase()
+        if (clean.isBlank()) return
+        val current = getDeletedTripIds().toMutableSet()
+        current.add(clean)
+        PlatformStorage.setString(KEY_DELETED_TRIP_IDS, current.joinToString(","))
+    }
+
+    fun isTripDeleted(tripId: String): Boolean {
+        val clean = tripId.trim().lowercase()
+        return getDeletedTripIds().contains(clean)
+    }
+}
