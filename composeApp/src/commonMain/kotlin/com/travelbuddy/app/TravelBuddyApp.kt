@@ -2589,6 +2589,11 @@ private fun TrackingScreen(
         val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "Traveler" } }
         val myId = SessionManager.getUserId().ifBlank { "usr-${myName.hashCode().absoluteValue}" }
 
+        // Eagerly acquire fresh high-accuracy GPS fix on launch
+        try {
+            PlatformLocation.fetchFreshLocation()
+        } catch (_: Exception) {}
+
         while (isActive) {
             // Send this device's live telemetry (authentic battery percentage and real GPS coords)
             val myBattery = PlatformBattery.getBatteryLevel()

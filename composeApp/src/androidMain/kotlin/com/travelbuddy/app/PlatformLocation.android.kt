@@ -9,6 +9,9 @@ import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
@@ -20,6 +23,7 @@ actual object PlatformLocation {
     var appContext: Context? = null
     private var lastLocation: RealLocation? = null
     private var activeListener: LocationListener? = null
+    private var activeFusedCallback: LocationCallback? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     fun init(context: Context) {
@@ -105,10 +109,43 @@ actual object PlatformLocation {
     @SuppressLint("MissingPermission")
     actual fun startLocationUpdates(onUpdate: (RealLocation) -> Unit) {
         val ctx = appContext ?: return
+        stopLocationUpdates()
+
+        // Immediate callback with last cached location if already known
+        lastLocation?.let { onUpdate(it) }
+
+        // 1. Google Play Services FusedLocationProviderClient (High accuracy GPS + Wi-Fi fusion indoors & outdoors)
+        try {
+            val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
+            fusedClient.lastLocation.addOnSuccessListener { loc ->
+                if (loc != null) {
+                    val realLoc = toRealLocation(loc)
+                    lastLocation = realLoc
+                    mainHandler.post { onUpdate(realLoc) }
+                }
+            }
+
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L).apply {
+                setMinUpdateIntervalMillis(1000L)
+                setMinUpdateDistanceMeters(0f)
+            }.build()
+
+            val callback = object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    val loc = result.lastLocation ?: return
+                    val realLoc = toRealLocation(loc)
+                    lastLocation = realLoc
+                    mainHandler.post { onUpdate(realLoc) }
+                }
+            }
+            activeFusedCallback = callback
+            fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
+        } catch (_: Exception) {
+        }
+
+        // 2. Fallback LocationManager in case Play Services is unavailable
         try {
             val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
-            stopLocationUpdates()
-
             val listener = object : LocationListener {
                 override fun onLocationChanged(location: Location) {
                     val realLoc = toRealLocation(location)
@@ -124,10 +161,10 @@ actual object PlatformLocation {
             activeListener = listener
 
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 3000L, 5f, listener, Looper.getMainLooper())
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, listener, Looper.getMainLooper())
             }
             if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 3000L, 5f, listener, Looper.getMainLooper())
+                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 0f, listener, Looper.getMainLooper())
             }
         } catch (_: Exception) {
         }
@@ -135,6 +172,15 @@ actual object PlatformLocation {
 
     actual fun stopLocationUpdates() {
         val ctx = appContext ?: return
+        try {
+            activeFusedCallback?.let {
+                val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
+                fusedClient.removeLocationUpdates(it)
+            }
+            activeFusedCallback = null
+        } catch (_: Exception) {
+        }
+
         try {
             val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
             activeListener?.let { lm.removeUpdates(it) }

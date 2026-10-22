@@ -136,58 +136,11 @@ public class TravelBuddyStateService {
         devices.put(petTag.id(), petTag);
     }
 
-    // --- REALTIME SCHEDULED TRACKING TICK ---
-    // Simulates realistic highway motion every 4s and broadcasts via WebSocket
-    @Scheduled(fixedRate = 4000)
+    // --- REALTIME TRACKING TICK ---
+    // Disabled synthetic simulation so authentic user GPS coordinates (e.g. Bellandur, Mahadevapura)
+    // and live telemetry are strictly preserved and never overwritten by artificial drift or fake speeds.
     public void liveTrackingHeartbeat() {
-        for (Trip trip : trips.values()) {
-            if (trip != null && "LIVE".equalsIgnoreCase(trip.status()) && !trip.members().isEmpty()) {
-                List<TripMember> updated = new ArrayList<>();
-                for (TripMember m : trip.members()) {
-                    double driftLat = (Math.random() - 0.48) * 0.0003;
-                    double driftLng = (Math.random() - 0.48) * 0.0003;
-                    double speedVar = 38.0 + (Math.random() * 15.0);
-                    double newLat = (m.latitude() != null ? m.latitude() : 12.9716) + driftLat;
-                    double newLng = (m.longitude() != null ? m.longitude() : 77.5946) + driftLng;
-
-                    TripMember updatedMember = new TripMember(
-                            m.id(),
-                            m.name(),
-                            m.color(),
-                            true,
-                            newLat,
-                            newLng,
-                            Math.round(speedVar * 10.0) / 10.0,
-                            m.batteryPercent() != null ? m.batteryPercent() : 90,
-                            System.currentTimeMillis()
-                    );
-                    updated.add(updatedMember);
-
-                    // Broadcast live location event
-                    if (webSocketBroadcastListener != null) {
-                        String json = String.format(
-                                Locale.US,
-                                "{\"type\":\"location\",\"tripId\":\"%s\",\"userId\":\"%s\",\"name\":\"%s\",\"latitude\":%.6f,\"longitude\":%.6f,\"speed\":%.1f,\"battery\":%d,\"timestamp\":%d}",
-                                trip.id(), m.id(), m.name(), newLat, newLng, speedVar, (m.batteryPercent() != null ? m.batteryPercent() : 90), System.currentTimeMillis()
-                        );
-                        webSocketBroadcastListener.accept(json);
-                    }
-                }
-                trips.put(trip.id(), new Trip(
-                        trip.id(),
-                        trip.name(),
-                        trip.source(),
-                        trip.destination(),
-                        trip.dates(),
-                        trip.status(),
-                        trip.tripCode(),
-                        trip.createdBy(),
-                        trip.coverImage(),
-                        updated,
-                        trip.createdAt()
-                ));
-            }
-        }
+        // Real tracking is driven strictly by authentic client GPS updates via updateLocation()
     }
 
     private final Map<String, String> activeOtps = new ConcurrentHashMap<>();

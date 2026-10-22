@@ -358,16 +358,21 @@ private fun renderGoogleMapContent(
     // Calculate real positions using authentic device and server GPS
     val travelerPositions = mutableListOf<Pair<TripMember, LatLng>>()
 
+    val mySessionName = SessionManager.getUserName().trim().lowercase().substringBefore("@")
+
     cleanMembers.forEachIndexed { index, member ->
         val rawLat = member.latitude
         val rawLng = member.longitude
-        val isYou = (index == 0)
+        val memberName = member.name.trim().lowercase().substringBefore("@")
+        val isYou = (mySessionName.isNotBlank() && (memberName == mySessionName || memberName.contains(mySessionName) || mySessionName.contains(memberName))) || (index == 0 && mySessionName.isBlank())
 
-        // Real GPS positioning without synthetic distortion:
+        // Real GPS positioning without synthetic distortion or city defaults:
         val latLng: LatLng = if (isYou && currLat != 0.0 && currLng != 0.0) {
             LatLng(currLat, currLng)
         } else if (rawLat != null && rawLng != null && rawLat != 0.0 && rawLng != 0.0) {
             LatLng(rawLat, rawLng)
+        } else if (isYou && currLat != 0.0 && currLng != 0.0) {
+            LatLng(currLat, currLng)
         } else if (currLat != 0.0 && currLng != 0.0) {
             LatLng(currLat + (index * 0.002), currLng + (index * 0.002))
         } else {
@@ -396,7 +401,7 @@ private fun renderGoogleMapContent(
         )
     }
 
-    // 5. Consecutive Dashed Connections with Distance Labels (5.2 km, 8.6 km from Image 2)
+    // 5. High-visibility Vibrant Blue Live Tracking Polyline Connecting Co-Travelers with Distance Labels
     if (travelerPositions.size >= 2) {
         for (i in 0 until travelerPositions.size - 1) {
             val p1 = travelerPositions[i].second
@@ -404,16 +409,25 @@ private fun renderGoogleMapContent(
 
             val distKm = haversineDistanceKm(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
 
-            // Draw dashed line connecting consecutive travelers (Black dashed line from Image 2)
+            // Outer glow line for crisp contrast
             map.addPolyline(
                 PolylineOptions()
                     .add(p1, p2)
-                    .width(4f)
-                    .color(android.graphics.Color.BLACK)
-                    .pattern(listOf(Dash(16f), Gap(12f)))
+                    .width(10f)
+                    .color(android.graphics.Color.parseColor("#4285F4")) // Soft Google Blue halo
+                    .geodesic(true)
             )
 
-            // Midpoint distance badge (e.g. 5.2 km, 8.6 km)
+            // Inner solid vibrant blue route line
+            map.addPolyline(
+                PolylineOptions()
+                    .add(p1, p2)
+                    .width(6f)
+                    .color(android.graphics.Color.parseColor("#1A73E8")) // Google Maps Primary Blue
+                    .geodesic(true)
+            )
+
+            // Midpoint distance badge (e.g. 5.2 km)
             val midLat = (p1.latitude + p2.latitude) / 2.0
             val midLng = (p1.longitude + p2.longitude) / 2.0
             val midLatLng = LatLng(midLat, midLng)
@@ -427,9 +441,9 @@ private fun renderGoogleMapContent(
         }
     }
 
-    // Animate camera to include all markers, or center on current user GPS if no destination
+    // Animate camera to include all markers (travelers & destination), fitting both into viewport
     try {
-        if (hasValidDestination && hasPoints) {
+        if (travelerPositions.size >= 2 || (hasValidDestination && hasPoints)) {
             val bounds = boundsBuilder.build()
             map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, (80 * density).toInt()))
         } else {
