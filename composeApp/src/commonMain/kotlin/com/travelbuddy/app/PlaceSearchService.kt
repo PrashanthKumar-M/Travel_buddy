@@ -46,6 +46,10 @@ object PlaceSearchService {
         PlaceSuggestion("Pondicherry", "Puducherry, India", 11.9416, 79.8083),
         PlaceSuggestion("Chikmagalur", "Chikkamagaluru, Karnataka, India", 13.3161, 75.7720),
         PlaceSuggestion("Hampi", "Hampi, Vijayanagara, Karnataka, India", 15.3350, 76.4600),
+        PlaceSuggestion("MM Hills (Male Mahadeshwara Betta)", "Hanur Taluk, Chamarajanagar, Karnataka, India", 11.9961, 77.5583),
+        PlaceSuggestion("Nandi Hills", "Chikkaballapur, Karnataka, India", 13.3702, 77.6835),
+        PlaceSuggestion("BR Hills (Biligirirangan Hills)", "Chamarajanagar, Karnataka, India", 11.9904, 77.1407),
+        PlaceSuggestion("Skandagiri", "Chikkaballapur, Karnataka, India", 13.4180, 77.6830),
         PlaceSuggestion("Gokarna", "Gokarna, Uttara Kannada, Karnataka, India", 14.5479, 74.3188),
         PlaceSuggestion("Rishikesh", "Rishikesh, Dehradun, Uttarakhand, India", 30.0869, 78.2676),
         PlaceSuggestion("Darjeeling", "Darjeeling, West Bengal, India", 27.0410, 88.2663),
@@ -62,9 +66,9 @@ object PlaceSearchService {
             it.description.contains(clean, ignoreCase = true)
         }
 
-        // 2. Fetch live online search from Nominatim geocoder
+        // 2. Fetch live online search from Nominatim geocoder restricted to India & English
         val onlineMatches = try {
-            val url = "https://nominatim.openstreetmap.org/search?q=${clean.encodeURLParameter()}&format=json&addressdetails=1&limit=5"
+            val url = "https://nominatim.openstreetmap.org/search?q=${clean.encodeURLParameter()}&countrycodes=in&accept-language=en&format=json&addressdetails=1&limit=8"
             val response: HttpResponse = httpClient.get(url) {
                 headers {
                     append(HttpHeaders.UserAgent, "TravelBuddy-App/1.0")
@@ -76,6 +80,10 @@ object PlaceSearchService {
                 array.mapNotNull { elem ->
                     val obj = elem.jsonObject
                     val displayName = obj["display_name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    // Filter out any non-Indian / East-Asian characters (Japanese Kanji, Hiragana, Katakana, Chinese)
+                    val hasEastAsianScript = displayName.any { it.code in 0x4E00..0x9FFF || it.code in 0x3040..0x30FF || it.code in 0xAC00..0xD7AF }
+                    if (hasEastAsianScript) return@mapNotNull null
+
                     val lat = obj["lat"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: return@mapNotNull null
                     val lon = obj["lon"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: return@mapNotNull null
                     val title = displayName.split(",").take(2).joinToString(",").trim()

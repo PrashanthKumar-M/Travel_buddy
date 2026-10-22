@@ -51,6 +51,7 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
+            implementation("com.google.android.gms:play-services-maps:19.0.0")
         }
     }
 }
@@ -81,8 +82,14 @@ android {
         .getOrElse("https://travel-buddy-3vz4.onrender.com")
     val wsUrl = providers.gradleProperty("TRAVEL_BUDDY_WS_URL")
         .getOrElse("wss://travel-buddy-3vz4.onrender.com/ws/live")
+    val mapsApiKey = providers.gradleProperty("MAPS_API_KEY")
+        .orElse(providers.environmentVariable("MAPS_API_KEY"))
+        .getOrElse("")
+
     defaultConfig {
         buildConfigField("String", "TRAVEL_BUDDY_API_URL", "\"$apiBaseUrl\"")
         buildConfigField("String", "TRAVEL_BUDDY_WS_URL", "\"$wsUrl\"")
+        buildConfigField("String", "MAPS_API_KEY", "\"$mapsApiKey\"")
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
     }
 }
