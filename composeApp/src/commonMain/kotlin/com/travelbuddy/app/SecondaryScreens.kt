@@ -325,7 +325,6 @@ internal fun ProfileScreen(
                         Text("Dark mode", Modifier.weight(1f), color = if (darkMode) Color(0xFFEAF0F8) else Tb.Navy, fontSize = 13.sp)
                         Switch(checked = darkMode, onCheckedChange = { onToggleDarkMode() })
                     }
-                    ProfileRow("Settings", "", null)
                     ProfileRow("Help & Support", "", null)
                 }
             }
@@ -371,7 +370,7 @@ internal fun ProfileScreen(
             ) {
                 TravelBuddyLogo(size = 18.dp)
                 Spacer(Modifier.size(8.dp))
-                Text("Travel Buddy v1.0.0 • Ready for Play Store", color = secondaryText, fontSize = 11.sp)
+                Text("Travel Buddy v1.0.0", color = secondaryText, fontSize = 11.sp)
             }
 
             // Generous clearance space so the logout button is 100% above any bottom navigation bar
@@ -559,8 +558,8 @@ data class LocalChatMessage(
 @Composable
 internal fun LocalChatScreen(
     members: List<TripMember>,
-    tripName: String = "Coorg Ride",
-    tripId: String = "coorg-ride",
+    tripName: String = "Group Chat",
+    tripId: String = "chat-local",
     userName: String = SessionManager.getUserName().ifBlank { "You" },
     repository: com.travelbuddy.app.data.TravelRepository? = null,
     onClose: (() -> Unit)? = null

@@ -303,6 +303,13 @@ private fun renderGoogleMapContent(
     val srcLatLng = LatLng(srcLat, srcLng)
     val dstLatLng = LatLng(dstLat, dstLng)
 
+    val hasValidDestination = dstName.isNotBlank() &&
+        !dstName.equals("Destination", ignoreCase = true) &&
+        !dstName.equals("Trip Destination", ignoreCase = true) &&
+        !dstName.equals("Coorg Valley", ignoreCase = true) &&
+        (dstLat != 0.0 || dstLng != 0.0) &&
+        (srcLat != dstLat || srcLng != dstLng)
+
     // 1. Start Callout Marker (Bengaluru Start from Image 2)
     val startCity = srcName.split(",").firstOrNull()?.trim() ?: "Start"
     map.addMarker(
@@ -314,24 +321,26 @@ private fun renderGoogleMapContent(
     boundsBuilder.include(srcLatLng)
     hasPoints = true
 
-    // 2. Destination Callout Marker (Coorg Destination from Image 2)
-    val destCity = dstName.split(",").firstOrNull()?.trim() ?: "Destination"
-    map.addMarker(
-        MarkerOptions()
-            .position(dstLatLng)
-            .icon(createCalloutMarkerBitmap(destCity, "Destination", isStart = false, density = density))
-            .anchor(0.5f, 0.9f)
-    )
-    boundsBuilder.include(dstLatLng)
+    if (hasValidDestination) {
+        // 2. Destination Callout Marker (from Image 2)
+        val destCity = dstName.split(",").firstOrNull()?.trim() ?: "Destination"
+        map.addMarker(
+            MarkerOptions()
+                .position(dstLatLng)
+                .icon(createCalloutMarkerBitmap(destCity, "Destination", isStart = false, density = density))
+                .anchor(0.5f, 0.9f)
+        )
+        boundsBuilder.include(dstLatLng)
 
-    // 3. Main Route Polyline (Thick vibrant blue from Image 2)
-    map.addPolyline(
-        PolylineOptions()
-            .add(srcLatLng, dstLatLng)
-            .width(12f)
-            .color(android.graphics.Color.parseColor("#1A73E8"))
-            .geodesic(true)
-    )
+        // 3. Main Route Polyline (Thick vibrant blue from Image 2)
+        map.addPolyline(
+            PolylineOptions()
+                .add(srcLatLng, dstLatLng)
+                .width(12f)
+                .color(android.graphics.Color.parseColor("#1A73E8"))
+                .geodesic(true)
+        )
+    }
 
     // 4. Multi-User Tracking along the Route (Exact match to Image 2)
     val travelerColors = listOf(
@@ -359,17 +368,21 @@ private fun renderGoogleMapContent(
         val latLng = if (hasValidCoords) {
             val prevPoint = travelerPositions.lastOrNull()?.second
             if (prevPoint != null && haversineDistanceKm(prevPoint.latitude, prevPoint.longitude, rawLat!!, rawLng!!) < minGapKm) {
-                val ratio = if (memberCount > 1) {
-                    0.18 + (index.toDouble() / memberCount.toDouble()) * 0.65
-                } else 0.40
-                LatLng(
-                    srcLat + (dstLat - srcLat) * ratio,
-                    srcLng + (dstLng - srcLng) * ratio
-                )
+                if (hasValidDestination) {
+                    val ratio = if (memberCount > 1) {
+                        0.18 + (index.toDouble() / memberCount.toDouble()) * 0.65
+                    } else 0.40
+                    LatLng(
+                        srcLat + (dstLat - srcLat) * ratio,
+                        srcLng + (dstLng - srcLng) * ratio
+                    )
+                } else {
+                    LatLng(rawLat + (index * 0.003), rawLng + (index * 0.003))
+                }
             } else {
                 LatLng(rawLat!!, rawLng!!)
             }
-        } else {
+        } else if (hasValidDestination) {
             // Space along route between start (18%) and destination (85%)
             val ratio = if (memberCount > 1) {
                 0.18 + (index.toDouble() / memberCount.toDouble()) * 0.65
@@ -378,6 +391,13 @@ private fun renderGoogleMapContent(
                 srcLat + (dstLat - srcLat) * ratio,
                 srcLng + (dstLng - srcLng) * ratio
             )
+        } else {
+            // No destination trip: place at current user's GPS
+            if (index == 0) {
+                LatLng(currLat, currLng)
+            } else {
+                LatLng(currLat + (index * 0.004), currLng + (index * 0.004))
+            }
         }
         travelerPositions.add(Pair(member, latLng))
         boundsBuilder.include(latLng)
@@ -433,14 +453,18 @@ private fun renderGoogleMapContent(
         }
     }
 
-    // Animate camera to include all markers
+    // Animate camera to include all markers, or center on current user GPS if no destination
     try {
-        if (hasPoints) {
+        if (hasValidDestination && hasPoints) {
             val bounds = boundsBuilder.build()
             map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, (80 * density).toInt()))
+        } else {
+            val center = if (currLat != 0.0 && currLng != 0.0) LatLng(currLat, currLng) else srcLatLng
+            map.animateCamera(CameraUpdateFactory.newLatLngZoom(center, 15f))
         }
     } catch (_: Exception) {
-        map.animateCamera(CameraUpdateFactory.newLatLngZoom(srcLatLng, 10f))
+        val center = if (currLat != 0.0 && currLng != 0.0) LatLng(currLat, currLng) else srcLatLng
+        map.animateCamera(CameraUpdateFactory.newLatLngZoom(center, 14f))
     }
 }
 

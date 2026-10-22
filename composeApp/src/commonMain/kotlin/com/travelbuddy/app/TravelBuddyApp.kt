@@ -103,6 +103,8 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.LocationOff
+import androidx.compose.material.icons.filled.CloseFullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.material.icons.filled.Lock
@@ -190,22 +192,12 @@ internal fun TravelBuddyMain(
         listOf(TripMember(currentUserId, currentUserName, 0xFF1D64F2L, true))
     }
     var activeTrip by remember {
-        mutableStateOf(
-            Trip(
-                id = "trip-active-1",
-                name = "My Active Trip",
-                source = "Bengaluru",
-                destination = "Coorg",
-                dates = "Upcoming",
-                status = TripStatus.LIVE,
-                members = starterMembers
-            )
-        )
+        mutableStateOf<Trip?>(null)
     }
-    var apiMessage by remember { mutableStateOf("1/1 members online") }
+    var apiMessage by remember { mutableStateOf("") }
     var activeTripCover by remember { mutableStateOf<String?>(null) }
     var tripCovers by remember { mutableStateOf(emptyMap<String, String>()) }
-    var trips by remember { mutableStateOf(listOf(activeTrip)) }
+    var trips by remember { mutableStateOf<List<Trip>>(emptyList()) }
     var settlements by remember { mutableStateOf(emptyList<com.travelbuddy.app.domain.Settlement>()) }
     var liveLocationCount by remember { mutableStateOf(0) }
 
@@ -234,38 +226,45 @@ internal fun TravelBuddyMain(
                 it.id.trim().lowercase() in deletedIds ||
                 it.tripCode.trim().lowercase() in deletedIds ||
                 it.id.equals("trip-coorg-expedition", ignoreCase = true) ||
-                it.tripCode.equals("TRIP-7489", ignoreCase = true)
+                it.tripCode.equals("TRIP-7489", ignoreCase = true) ||
+                it.id.equals("trip-active-1", ignoreCase = true)
             }
             if (validTrips.isNotEmpty()) {
                 trips = validTrips
                 activeTrip = validTrips.first()
-                members = deduplicateTripMembers(activeTrip.members, currentUserName)
-                activeTripCover = activeTrip.coverImage
+                members = deduplicateTripMembers(activeTrip!!.members, currentUserName)
+                activeTripCover = activeTrip!!.coverImage
                 apiMessage = "Connected to backend • ${trips.size} trips synced"
+            } else {
+                trips = emptyList()
+                activeTrip = null
             }
         }
     }
 
-    LaunchedEffect(activeTrip.id, config.useRemoteApi) {
+    LaunchedEffect(activeTrip?.id, config.useRemoteApi) {
         if (!config.useRemoteApi) return@LaunchedEffect
-        repository.liveSnapshot(activeTrip.id)
+        val tripId = activeTrip?.id ?: return@LaunchedEffect
+        if (tripId.isBlank()) return@LaunchedEffect
+        repository.liveSnapshot(tripId)
             .onSuccess { snapshot ->
                 activeTrip = snapshot
                 members = snapshot.members
                 apiMessage = "Live snapshot refreshed."
             }
             .onFailure { apiMessage = "Live snapshot unavailable: ${it.message ?: "unknown error"}" }
-        repository.getExpenses(activeTrip.id).onSuccess { fetchedExpenses ->
+        repository.getExpenses(tripId).onSuccess { fetchedExpenses ->
             if (fetchedExpenses.isNotEmpty()) {
                 expenses = fetchedExpenses
             }
         }
-        repository.settlements(activeTrip.id).onSuccess { settlements = it }
+        repository.settlements(tripId).onSuccess { settlements = it }
     }
 
-    LaunchedEffect(activeTrip.id, config.webSocketUrl, config.useRemoteApi) {
+    LaunchedEffect(activeTrip?.id, config.webSocketUrl, config.useRemoteApi) {
         if (!config.useRemoteApi) return@LaunchedEffect
-        val tripId = activeTrip.id
+        val tripId = activeTrip?.id ?: return@LaunchedEffect
+        if (tripId.isBlank()) return@LaunchedEffect
         val socketUrl = config.webSocketUrl ?: return@LaunchedEffect
         val gateway = RealtimeLocationGateway(socketUrl)
         try {
@@ -285,8 +284,9 @@ internal fun TravelBuddyMain(
         }
     }
 
-    LaunchedEffect(activeTrip.id, config.useRemoteApi) {
+    LaunchedEffect(activeTrip?.id, config.useRemoteApi) {
         if (config.useRemoteApi) return@LaunchedEffect
+        if (activeTrip == null) return@LaunchedEffect
         while (true) {
             kotlinx.coroutines.delay(4000)
             liveLocationCount += 1
@@ -393,8 +393,8 @@ internal fun TravelBuddyMain(
 
                         HomeScreen(
                             members = members,
-                            tripName = activeTrip.name,
-                            tripDates = activeTrip.dates,
+                            tripName = activeTrip?.name ?: "No Active Trip",
+                            tripDates = activeTrip?.dates ?: "Plan or join a trip to get started",
                             coverImage = activeTripCover,
                             apiMessage = apiMessage,
                             navigate = {
@@ -431,20 +431,12 @@ internal fun TravelBuddyMain(
                                 }
                                 val remaining = trips.filterNot { it.id == trip.id || it.tripCode == trip.tripCode }
                                 trips = remaining
-                                if (trip.id == activeTrip.id) {
+                                if (trip.id == activeTrip?.id) {
                                     if (remaining.isNotEmpty()) {
                                         activeTrip = remaining.first()
-                                        members = deduplicateTripMembers(activeTrip.members, currentUserName)
+                                        members = deduplicateTripMembers(activeTrip!!.members, currentUserName)
                                     } else {
-                                        activeTrip = Trip(
-                                            id = "",
-                                            name = "No Active Trip",
-                                            source = "Starting Point",
-                                            destination = "Destination",
-                                            dates = "Create a trip to get started",
-                                            status = TripStatus.PLANNING,
-                                            members = starterMembers
-                                        )
+                                        activeTrip = null
                                         members = starterMembers
                                     }
                                     expenses = emptyList()
@@ -549,8 +541,8 @@ internal fun TravelBuddyMain(
                                             val newSyncedTrip = Trip(
                                                 id = cleanId,
                                                 name = "Trip: $cleanId",
-                                                source = activeTrip.source,
-                                                destination = activeTrip.destination,
+                                                source = activeTrip?.source ?: "Bengaluru",
+                                                destination = activeTrip?.destination ?: "",
                                                 dates = "Active Live",
                                                 status = TripStatus.LIVE,
                                                 members = listOf(myMember, buddyMember)
@@ -570,8 +562,8 @@ internal fun TravelBuddyMain(
                     AppTab.Chat -> {
                         LocalChatScreen(
                             members = members,
-                            tripName = activeTrip.name,
-                            tripId = activeTrip.id,
+                            tripName = activeTrip?.name ?: "Group Chat",
+                            tripId = activeTrip?.id ?: "chat-local",
                             userName = currentUserName,
                             repository = if (config.useRemoteApi) repository else null,
                             onClose = { selectedTab = AppTab.Track }
@@ -606,13 +598,13 @@ internal fun TravelBuddyMain(
                     AppTab.Expenses -> {
 
                         ExpensesScreen(
-                            tripName = activeTrip.name,
+                            tripName = activeTrip?.name ?: "Shared Expenses",
                             members = members,
                             expenses = expenses,
                             settlements = settlements,
                             onAdd = { expense ->
-                                val tripId = activeTrip.id
-                                if (!config.useRemoteApi) {
+                                val tripId = activeTrip?.id ?: ""
+                                if (!config.useRemoteApi || tripId.isBlank()) {
                                     expenses = expenses + expense
                                     apiMessage = "Expense added locally."
                                 } else {
@@ -1802,7 +1794,7 @@ private fun TripsScreen(
                         value = joinTripIdInput,
                         onValueChange = { joinTripIdInput = it.trim() },
                         label = { Text("Trip ID") },
-                        placeholder = { Text("e.g. trip-coorg-expedition or TB-7489") },
+                        placeholder = { Text("e.g. TB-7489 or trip-1002") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -1962,7 +1954,7 @@ private fun CreateTripDialog(
                                     destSuggestions = PlaceSearchService.searchPlaces(it)
                                 }
                             },
-                            label = { Text("Destination (e.g. Coorg, Goa, Ooty)") },
+                            label = { Text("Destination (e.g. Goa, Ooty, Mysuru)") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             leadingIcon = {
@@ -2538,7 +2530,8 @@ private fun TrackingScreen(
     var showAddTagDialog by remember { mutableStateOf(false) }
 
     // State for live tracked buddies
-    var trackingCode by remember(activeTrip) { mutableStateOf(activeTrip?.id ?: "TRIP-1001") }
+    val hasActiveTrip = activeTrip != null && activeTrip.id.isNotBlank()
+    var trackingCode by remember(activeTrip) { mutableStateOf(if (hasActiveTrip) activeTrip.id else "") }
     var joinCodeInput by remember { mutableStateOf("") }
     var codeStatusMessage by remember { mutableStateOf<String?>(null) }
     var activeBuddies by remember(members) {
@@ -2553,7 +2546,7 @@ private fun TrackingScreen(
 
     // Keep activeBuddies synced when activeTrip or members change
     LaunchedEffect(activeTrip, members) {
-        if (activeTrip != null) {
+        if (activeTrip != null && activeTrip.id.isNotBlank()) {
             trackingCode = activeTrip.id
         }
         activeBuddies = deduplicateTripMembers(members, currentUserName)
@@ -2562,6 +2555,7 @@ private fun TrackingScreen(
     // Bidirectional Real-time Multi-Device Sync: Auto-refreshes co-travelers and telemetry every 3.5s
     LaunchedEffect(activeTrip?.id) {
         val currentTripId = activeTrip?.id ?: return@LaunchedEffect
+        if (currentTripId.isBlank()) return@LaunchedEffect
         val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "Traveler" } }
         val myId = SessionManager.getUserId().ifBlank { "usr-${myName.hashCode().absoluteValue}" }
 
@@ -2603,10 +2597,12 @@ private fun TrackingScreen(
         }
     }
 
-    val srcName = activeTrip?.source?.ifBlank { "Starting Point" } ?: "Starting Point"
-    val dstName = activeTrip?.destination?.ifBlank { "Destination" } ?: "Destination"
+    val srcName = if (hasActiveTrip && activeTrip.source.isNotBlank()) activeTrip.source else "Starting Point"
+    val dstName = if (hasActiveTrip && activeTrip.destination.isNotBlank()) activeTrip.destination else ""
     val totalRouteKm = remember(srcName, dstName) {
-        LocationCoordinateResolver.calculateRoadDistanceKm(srcName, dstName)
+        if (dstName.isNotBlank()) {
+            LocationCoordinateResolver.calculateRoadDistanceKm(srcName, dstName)
+        } else 0.0
     }
 
     // State for child school bag / personal tag device
@@ -2631,7 +2627,8 @@ private fun TrackingScreen(
     var engineLocked by remember { mutableStateOf(false) }
     var tagAlertTriggered by remember { mutableStateOf(false) }
 
-    Column(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
         // Top 3-Way Sub-Tabs
         Row(
             modifier = Modifier
@@ -2668,16 +2665,16 @@ private fun TrackingScreen(
                 ) {
                     item {
                         LiveGoogleMapView(
-                            sourceName = activeTrip?.source?.ifBlank { "Bengaluru" } ?: "Starting Point",
-                            destinationName = activeTrip?.destination?.ifBlank { "Coorg Valley" } ?: "Trip Destination",
-                            members = distinctBuddies,
+                            sourceName = srcName,
+                            destinationName = dstName,
+                            members = if (hasActiveTrip) distinctBuddies else emptyList(),
                             vehicle = null,
                             vehicleType = activeTrip?.vehicleType ?: "CAR",
                             childBagDevice = null,
                             isLiveUsersMode = true,
-                            isFullscreen = isMapFullscreen,
-                            onToggleFullscreen = { isMapFullscreen = !isMapFullscreen },
-                            modifier = if (isMapFullscreen) Modifier.fillMaxWidth().height(480.dp) else Modifier.fillMaxWidth().height(320.dp)
+                            isFullscreen = false,
+                            onToggleFullscreen = { isMapFullscreen = true },
+                            modifier = Modifier.fillMaxWidth().height(320.dp)
                         )
                     }
 
@@ -2697,43 +2694,54 @@ private fun TrackingScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column {
-                                        Text("Active Trip ID / Tracking Code", color = tbSubtextColor(), fontSize = 12.sp)
-                                        Text(trackingCode, color = tbTextColor(), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            if (hasActiveTrip) "Active Trip ID / Tracking Code" else "No Active Trip",
+                                            color = tbSubtextColor(),
+                                            fontSize = 12.sp
+                                        )
+                                        Text(
+                                            if (hasActiveTrip) trackingCode else "Create or Join a Trip",
+                                            color = tbTextColor(),
+                                            fontSize = if (hasActiveTrip) 22.sp else 16.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                     }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Surface(
-                                            shape = RoundedCornerShape(12.dp),
-                                            color = Color(0xFF22C55E).copy(alpha = 0.15f),
-                                            modifier = Modifier.clickable {
-                                                if (onNavigateToChat != null) {
-                                                    onNavigateToChat()
-                                                } else {
-                                                    showGroupChat = true
+                                    if (hasActiveTrip) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Surface(
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = Color(0xFF22C55E).copy(alpha = 0.15f),
+                                                modifier = Modifier.clickable {
+                                                    if (onNavigateToChat != null) {
+                                                        onNavigateToChat()
+                                                    } else {
+                                                        showGroupChat = true
+                                                    }
+                                                }
+                                            ) {
+                                                Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("💬", fontSize = 13.sp)
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Text("Chat", color = Color(0xFF16A34A), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                                 }
                                             }
-                                        ) {
-                                            Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                Text("💬", fontSize = 13.sp)
-                                                Spacer(Modifier.width(4.dp))
-                                                Text("Chat", color = Color(0xFF16A34A), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                            }
-                                        }
-                                        Surface(
-                                            shape = RoundedCornerShape(12.dp),
-                                            color = Blue.copy(alpha = 0.15f),
-                                            modifier = Modifier.clickable {
-                                                clipboardManager.setText(AnnotatedString(trackingCode))
-                                                codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your travel buddy."
-                                                PlatformShare.shareText(
-                                                    text = "Join my live trip on Travel Buddy!\nTrip ID: $trackingCode\nTrack my live location in real-time.",
-                                                    title = "Share Trip ID"
-                                                )
-                                            }
-                                        ) {
-                                            Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(Icons.Filled.Share, "Share", tint = Blue, modifier = Modifier.size(15.dp))
-                                                Spacer(Modifier.width(4.dp))
-                                                Text("Copy ID", color = Blue, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                            Surface(
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = Blue.copy(alpha = 0.15f),
+                                                modifier = Modifier.clickable {
+                                                    clipboardManager.setText(AnnotatedString(trackingCode))
+                                                    codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your travel buddy."
+                                                    PlatformShare.shareText(
+                                                        text = "Join my live trip on Travel Buddy!\nTrip ID: $trackingCode\nTrack my live location in real-time.",
+                                                        title = "Share Trip ID"
+                                                    )
+                                                }
+                                            ) {
+                                                Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Filled.Share, "Share", tint = Blue, modifier = Modifier.size(15.dp))
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Text("Copy ID", color = Blue, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                }
                                             }
                                         }
                                     }
@@ -2750,7 +2758,7 @@ private fun TrackingScreen(
                                     OutlinedTextField(
                                         value = joinCodeInput,
                                         onValueChange = { joinCodeInput = it.trim() },
-                                        placeholder = { Text("Enter Trip ID (e.g. trip-coorg-expedition)", fontSize = 12.sp) },
+                                        placeholder = { Text("Enter Trip ID (e.g. TB-8921)", fontSize = 12.sp) },
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -2833,16 +2841,18 @@ private fun TrackingScreen(
                         }
                     }
 
-                    item {
-                        RiderDetailsTable(
-                            buddies = distinctBuddies,
-                            currentUserName = currentUserName,
-                            darkMode = LocalTravelBuddyDarkMode.current
-                        )
+                    if (hasActiveTrip && distinctBuddies.isNotEmpty()) {
+                        item {
+                            RiderDetailsTable(
+                                buddies = distinctBuddies,
+                                currentUserName = currentUserName,
+                                darkMode = LocalTravelBuddyDarkMode.current
+                            )
+                        }
                     }
 
                     // Companion invite card when only 1 traveler is present
-                    if (distinctBuddies.size == 1) {
+                    if (hasActiveTrip && distinctBuddies.size == 1) {
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2899,6 +2909,8 @@ private fun TrackingScreen(
                         LiveGoogleMapView(
                             members = emptyList(),
                             vehicle = vehicle,
+                            isFullscreen = false,
+                            onToggleFullscreen = { isMapFullscreen = true },
                             modifier = Modifier.fillMaxWidth().height(260.dp)
                         )
                     }
@@ -3029,6 +3041,8 @@ private fun TrackingScreen(
                         LiveGoogleMapView(
                             members = emptyList(),
                             childBagDevice = childBagDevice,
+                            isFullscreen = false,
+                            onToggleFullscreen = { isMapFullscreen = true },
                             modifier = Modifier.fillMaxWidth().height(260.dp)
                         )
                     }
@@ -3155,6 +3169,69 @@ private fun TrackingScreen(
                                     Text(if (tagAlertTriggered) "Stop" else "Ring Tag")
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // True Fullscreen Map Overlay (occupies 100% of phone screen)
+    if (isMapFullscreen) {
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { isMapFullscreen = false },
+                properties = androidx.compose.ui.window.DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    decorFitsSystemWindows = false
+                )
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                ) {
+                    LiveGoogleMapView(
+                        sourceName = srcName,
+                        destinationName = dstName,
+                        members = if (hasActiveTrip) distinctBuddies else emptyList(),
+                        vehicle = if (selectedMode == 1) vehicle else null,
+                        vehicleType = activeTrip?.vehicleType ?: "CAR",
+                        childBagDevice = if (selectedMode == 2) childBagDevice else null,
+                        isLiveUsersMode = (selectedMode == 0),
+                        isFullscreen = true,
+                        onToggleFullscreen = { isMapFullscreen = false },
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // Prominent Floating Minimize Button (Top Right with status bar clearance)
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .statusBarsPadding()
+                            .padding(top = 16.dp, end = 16.dp)
+                            .clickable { isMapFullscreen = false },
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color.Black.copy(alpha = 0.85f),
+                        shadowElevation = 8.dp,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.CloseFullscreen,
+                                contentDescription = "Minimize map",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = "Minimize",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
                         }
                     }
                 }

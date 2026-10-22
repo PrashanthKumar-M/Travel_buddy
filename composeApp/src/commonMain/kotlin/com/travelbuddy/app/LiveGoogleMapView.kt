@@ -88,9 +88,9 @@ fun LiveGoogleMapView(
     vehicle: Vehicle? = null,
     vehicleType: String = "CAR",
     childBagDevice: MapTarget? = null,
-    destinationName: String = "Trip Destination",
-    destinationLat: Double = 12.4244,
-    destinationLng: Double = 75.7382,
+    destinationName: String = "",
+    destinationLat: Double = 0.0,
+    destinationLng: Double = 0.0,
     isLiveUsersMode: Boolean = true,
     isFullscreen: Boolean = false,
     onToggleFullscreen: (() -> Unit)? = null,
@@ -117,15 +117,32 @@ fun LiveGoogleMapView(
     val (resolvedSrcLat, resolvedSrcLng) = remember(sourceName, sourceLat, sourceLng, activeUserLat) {
         LocationCoordinateResolver.resolveCoordinates(sourceName, activeUserLat, activeUserLng)
     }
-    val (resolvedDstLat, resolvedDstLng) = remember(destinationName, destinationLat, destinationLng) {
-        LocationCoordinateResolver.resolveCoordinates(destinationName, destinationLat, destinationLng)
+
+    val hasValidDestination = remember(destinationName) {
+        destinationName.isNotBlank() &&
+            !destinationName.equals("Destination", ignoreCase = true) &&
+            !destinationName.equals("Trip Destination", ignoreCase = true) &&
+            !destinationName.equals("Coorg Valley", ignoreCase = true) &&
+            !destinationName.equals(sourceName, ignoreCase = true)
     }
 
-    val totalDistance = remember(sourceName, destinationName, resolvedSrcLat, resolvedDstLat) {
-        LocationCoordinateResolver.calculateRoadDistanceKm(sourceName, destinationName)
+    val (resolvedDstLat, resolvedDstLng) = remember(destinationName, destinationLat, destinationLng, hasValidDestination) {
+        if (hasValidDestination) {
+            LocationCoordinateResolver.resolveCoordinates(destinationName, destinationLat, destinationLng)
+        } else {
+            Pair(0.0, 0.0)
+        }
     }
-    val drivingEta = remember(totalDistance) {
-        LocationCoordinateResolver.calculateDrivingEta(totalDistance)
+
+    val totalDistance = remember(sourceName, destinationName, resolvedSrcLat, resolvedDstLat, hasValidDestination) {
+        if (hasValidDestination) {
+            LocationCoordinateResolver.calculateRoadDistanceKm(sourceName, destinationName)
+        } else 0.0
+    }
+    val drivingEta = remember(totalDistance, hasValidDestination) {
+        if (hasValidDestination) {
+            LocationCoordinateResolver.calculateDrivingEta(totalDistance)
+        } else ""
     }
 
     val vehicleIcon = when (vehicleType.uppercase()) {
@@ -152,7 +169,7 @@ fun LiveGoogleMapView(
                 sourceName = sourceName,
                 sourceLat = resolvedSrcLat,
                 sourceLng = resolvedSrcLng,
-                destinationName = destinationName,
+                destinationName = if (hasValidDestination) destinationName else "",
                 destinationLat = resolvedDstLat,
                 destinationLng = resolvedDstLng,
                 currentUserLat = activeUserLat,
@@ -187,7 +204,11 @@ fun LiveGoogleMapView(
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = "$vehicleIcon Route: ${formatDistance(totalDistance)} ($drivingEta)",
+                                text = if (hasValidDestination) {
+                                    "$vehicleIcon Route: ${formatDistance(totalDistance)} ($drivingEta)"
+                                } else {
+                                    "📍 Live GPS Location"
+                                },
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (darkMode) Color.White else Color(0xFF1E293B)
@@ -195,7 +216,14 @@ fun LiveGoogleMapView(
                         }
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            text = "$sourceName ➔ $destinationName",
+                            text = if (hasValidDestination) {
+                                "$sourceName ➔ $destinationName"
+                            } else {
+                                val locAddr = realLocationState.value?.address
+                                if (!locAddr.isNullOrBlank()) locAddr
+                                else if (sourceName.isNotBlank() && sourceName != "Starting Point") sourceName
+                                else "Bengaluru, India"
+                            },
                             fontSize = 10.sp,
                             color = Color(0xFF1A73E8),
                             fontWeight = FontWeight.SemiBold,

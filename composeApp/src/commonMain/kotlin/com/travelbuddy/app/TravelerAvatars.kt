@@ -7,9 +7,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,6 +26,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -274,6 +278,7 @@ fun TravelerAvatar(
 
 /**
  * Avatar Selector for Profile or Trip Settings.
+ * Displays exactly 3 uniform cards visible across the screen width with a clear scroll indicator.
  */
 @Composable
 fun AvatarSelector(
@@ -281,48 +286,120 @@ fun AvatarSelector(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(AvatarProfile.values()) { profile ->
-                val isSelected = selectedAvatar.equals(profile.id, ignoreCase = true)
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (isSelected) profile.badgeColor.copy(alpha = 0.15f) else Color.Transparent,
-                    border = androidx.compose.foundation.BorderStroke(
-                        if (isSelected) 2.dp else 1.dp,
-                        if (isSelected) profile.badgeColor else Color(0xFFCBD5E1)
-                    ),
-                    modifier = Modifier.clickable { onSelect(profile.id) }
-                ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+    val listState = rememberLazyListState()
+    val profiles = remember { AvatarProfile.values() }
+
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val spacing = 8.dp
+        // Symmetrically size cards so exactly 3 fit across the available width
+        val cardWidth = ((maxWidth - (spacing * 2)) / 3).coerceAtLeast(96.dp)
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            LazyRow(
+                state = listState,
+                horizontalArrangement = Arrangement.spacedBy(spacing),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                items(profiles) { profile ->
+                    val isSelected = selectedAvatar.equals(profile.id, ignoreCase = true)
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isSelected) profile.badgeColor.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                        border = androidx.compose.foundation.BorderStroke(
+                            if (isSelected) 2.dp else 1.dp,
+                            if (isSelected) profile.badgeColor else MaterialTheme.colorScheme.outlineVariant
+                        ),
+                        modifier = Modifier
+                            .width(cardWidth)
+                            .clickable { onSelect(profile.id) }
                     ) {
-                        Box(contentAlignment = Alignment.BottomEnd) {
-                            TravelerAvatar(avatarType = profile.id, size = 48.dp)
-                            if (isSelected) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = profile.badgeColor,
-                                    modifier = Modifier.size(16.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.padding(2.dp)
-                                    )
+                        Column(
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.BottomEnd) {
+                                TravelerAvatar(avatarType = profile.id, size = 44.dp)
+                                if (isSelected) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = profile.badgeColor,
+                                        modifier = Modifier.size(16.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.padding(2.dp)
+                                        )
+                                    }
                                 }
                             }
+                            Text(
+                                text = profile.title,
+                                fontSize = 10.5.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) profile.badgeColor else MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp)
+                            )
                         }
-                        Text(
-                            profile.title,
-                            fontSize = 11.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isSelected) profile.badgeColor else MaterialTheme.colorScheme.onSurface
+                    }
+                }
+            }
+
+            // Scroll indicator below the cards indicating scrollable content
+            val firstVisible = listState.firstVisibleItemIndex
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Segment/pill dots indicator for the 6 avatars (3 visible at once)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    profiles.forEachIndexed { index, _ ->
+                        val isVisibleInWindow = index in firstVisible..(firstVisible + 2)
+                        val isLead = index == firstVisible
+                        Box(
+                            modifier = Modifier
+                                .height(4.dp)
+                                .width(if (isLead) 16.dp else if (isVisibleInWindow) 8.dp else 5.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(
+                                    if (isLead) MaterialTheme.colorScheme.primary
+                                    else if (isVisibleInWindow) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                                )
                         )
                     }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Text(
+                        text = if (firstVisible > 0) "Showing ${firstVisible + 1}-${(firstVisible + 3).coerceAtMost(profiles.size)} of ${profiles.size}" else "Swipe to see more",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Scroll more",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(11.dp)
+                    )
                 }
             }
         }
