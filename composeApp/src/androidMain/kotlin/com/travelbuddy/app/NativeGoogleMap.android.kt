@@ -342,7 +342,7 @@ private fun renderGoogleMapContent(
         )
     }
 
-    // 4. Multi-User Tracking along the Route (Exact match to Image 2)
+    // 4. Multi-User Tracking along the Route (Real GPS locations)
     val travelerColors = listOf(
         "#1A73E8", // Blue for You / User 1
         "#E91E63", // Pink for Netra / User 2
@@ -355,57 +355,31 @@ private fun renderGoogleMapContent(
     // Deduplicate members so each user appears once
     val cleanMembers = deduplicateMemberList(members)
 
-    // Calculate positions along the route with collision avoidance so markers never overlap
+    // Calculate real positions using authentic device and server GPS
     val travelerPositions = mutableListOf<Pair<TripMember, LatLng>>()
-    val memberCount = cleanMembers.size
-    val minGapKm = 14.0
 
     cleanMembers.forEachIndexed { index, member ->
         val rawLat = member.latitude
         val rawLng = member.longitude
+        val isYou = (index == 0)
 
-        val hasValidCoords = rawLat != null && rawLng != null && (rawLat != srcLat || rawLng != srcLng)
-        val latLng = if (hasValidCoords) {
-            val prevPoint = travelerPositions.lastOrNull()?.second
-            if (prevPoint != null && haversineDistanceKm(prevPoint.latitude, prevPoint.longitude, rawLat!!, rawLng!!) < minGapKm) {
-                if (hasValidDestination) {
-                    val ratio = if (memberCount > 1) {
-                        0.18 + (index.toDouble() / memberCount.toDouble()) * 0.65
-                    } else 0.40
-                    LatLng(
-                        srcLat + (dstLat - srcLat) * ratio,
-                        srcLng + (dstLng - srcLng) * ratio
-                    )
-                } else {
-                    LatLng(rawLat + (index * 0.003), rawLng + (index * 0.003))
-                }
-            } else {
-                LatLng(rawLat!!, rawLng!!)
-            }
-        } else if (hasValidDestination) {
-            // Space along route between start (18%) and destination (85%)
-            val ratio = if (memberCount > 1) {
-                0.18 + (index.toDouble() / memberCount.toDouble()) * 0.65
-            } else 0.40
-            LatLng(
-                srcLat + (dstLat - srcLat) * ratio,
-                srcLng + (dstLng - srcLng) * ratio
-            )
+        // Real GPS positioning without synthetic distortion:
+        val latLng: LatLng = if (isYou && currLat != 0.0 && currLng != 0.0) {
+            LatLng(currLat, currLng)
+        } else if (rawLat != null && rawLng != null && rawLat != 0.0 && rawLng != 0.0) {
+            LatLng(rawLat, rawLng)
+        } else if (currLat != 0.0 && currLng != 0.0) {
+            LatLng(currLat + (index * 0.002), currLng + (index * 0.002))
         } else {
-            // No destination trip: place at current user's GPS
-            if (index == 0) {
-                LatLng(currLat, currLng)
-            } else {
-                LatLng(currLat + (index * 0.004), currLng + (index * 0.004))
-            }
+            LatLng(srcLat + (index * 0.002), srcLng + (index * 0.002))
         }
+
         travelerPositions.add(Pair(member, latLng))
         boundsBuilder.include(latLng)
 
-        val isYou = index == 0 // First traveler is the active user
         val colorHex = travelerColors[index % travelerColors.size]
 
-        // Add Custom Circular Traveler Marker with Name Capsule Pill and Vehicle icon (Image 2)
+        // Add Custom Circular Traveler Marker with Name Capsule Pill and Vehicle icon
         map.addMarker(
             MarkerOptions()
                 .position(latLng)

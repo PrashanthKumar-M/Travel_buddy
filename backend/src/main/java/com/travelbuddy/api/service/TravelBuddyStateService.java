@@ -339,6 +339,22 @@ public class TravelBuddyStateService {
         return msg;
     }
 
+    private double[] parseSourceCoordinates(String source) {
+        if (source != null && !source.isBlank()) {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("(-?\\d{1,3}\\.\\d+)[,\\s/]+(-?\\d{1,3}\\.\\d+)").matcher(source);
+            if (m.find()) {
+                try {
+                    double lat = Double.parseDouble(m.group(1));
+                    double lng = Double.parseDouble(m.group(2));
+                    if (lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0) {
+                        return new double[]{lat, lng};
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+        return new double[]{12.9716, 77.5946};
+    }
+
     // --- TRIPS ---
     public Trip createTrip(CreateTripRequest req) {
         String id = (req.id() != null && !req.id().isBlank())
@@ -346,18 +362,22 @@ public class TravelBuddyStateService {
                 : "trip-" + UUID.randomUUID().toString().substring(0, 8);
         String code = "TRIP-" + (1000 + codeGenerator.incrementAndGet() % 9000);
 
+        double[] coords = parseSourceCoordinates(req.source());
         List<TripMember> members = new ArrayList<>();
-        long[] colors = {0xFF2F80EDL, 0xFF27AE60L, 0xFFF2994AL, 0xFF9B51E0L, 0xFFEB5757L};
+        long[] colors = {0xFF1A73E8L, 0xFFE91E63L, 0xFFFF9800L, 0xFF9C27B0L, 0xFF00897BL, 0xFF7CB342L};
         int idx = 0;
         for (String mName : req.members()) {
+            String mId = (req.createdBy() != null && !req.createdBy().isBlank() && idx == 0)
+                    ? req.createdBy()
+                    : mName;
             members.add(new TripMember(
-                    "mem-" + UUID.randomUUID().toString().substring(0, 6),
+                    mId,
                     mName,
                     colors[idx % colors.length],
                     true,
-                    12.9716 + (Math.random() - 0.5) * 0.02,
-                    77.5946 + (Math.random() - 0.5) * 0.02,
-                    40.0,
+                    coords[0],
+                    coords[1],
+                    0.0,
                     100,
                     System.currentTimeMillis()
             ));
@@ -384,6 +404,8 @@ public class TravelBuddyStateService {
         );
         trips.put(id, trip);
         tripCodeToId.put(code, id);
+        tripCodeToId.put(id, id);
+        tripCodeToId.put(id.toUpperCase(), id);
 
         // Automatically create associated trip split group
         String groupId = "grp-" + id;
@@ -460,40 +482,29 @@ public class TravelBuddyStateService {
 
     public Optional<Trip> joinTripByCode(String code, String userId, String userName) {
         String cleanCode = code != null ? code.trim() : "";
-        String tripId = tripCodeToId.get(cleanCode.toUpperCase());
-        if (tripId == null) {
-            tripId = tripCodeToId.get(cleanCode);
-        }
-        if (tripId == null) {
-            if (trips.containsKey(cleanCode)) {
-                tripId = cleanCode;
-            } else if (trips.containsKey(cleanCode.toLowerCase())) {
-                tripId = cleanCode.toLowerCase();
-            } else {
-                for (Trip t : trips.values()) {
-                    if (t.id().equalsIgnoreCase(cleanCode) || t.tripCode().equalsIgnoreCase(cleanCode)) {
-                        tripId = t.id();
-                        break;
-                    }
-                }
-            }
-        }
-        if (tripId == null) return Optional.empty();
+        String tripId = resolveTripId(cleanCode);
         Trip trip = trips.get(tripId);
         if (trip == null) return Optional.empty();
 
-        boolean exists = trip.members().stream().anyMatch(m -> m.name().equalsIgnoreCase(userName) || m.id().equals(userId));
+        String normUserName = (userName != null && !userName.isBlank()) ? userName.trim() : "Traveler";
+        String normUserId = (userId != null && !userId.isBlank()) ? userId.trim() : normUserName;
+
+        boolean exists = trip.members().stream().anyMatch(m ->
+                m.name().equalsIgnoreCase(normUserName) || m.id().equalsIgnoreCase(normUserId) ||
+                m.name().equalsIgnoreCase(normUserId) || m.id().equalsIgnoreCase(normUserName)
+        );
         if (!exists) {
             List<TripMember> updatedMembers = new ArrayList<>(trip.members());
+            long[] colors = {0xFF1A73E8L, 0xFFE91E63L, 0xFFFF9800L, 0xFF9C27B0L, 0xFF00897BL, 0xFF7CB342L};
             updatedMembers.add(new TripMember(
-                    userId != null && !userId.isBlank() ? userId : "usr-" + UUID.randomUUID().toString().substring(0, 6),
-                    userName != null && !userName.isBlank() ? userName : "Buddy " + (updatedMembers.size() + 1),
-                    0xFF2F80EDL,
+                    normUserId,
+                    normUserName,
+                    colors[updatedMembers.size() % colors.length],
                     true,
-                    12.9716,
-                    77.5946,
-                    35.0,
-                    90,
+                    null,
+                    null,
+                    0.0,
+                    100,
                     System.currentTimeMillis()
             ));
             Trip updatedTrip = new Trip(
@@ -511,6 +522,12 @@ public class TravelBuddyStateService {
                     trip.vehicleType()
             );
             trips.put(tripId, updatedTrip);
+            tripCodeToId.put(trip.id(), trip.id());
+            tripCodeToId.put(trip.id().toUpperCase(), trip.id());
+            if (trip.tripCode() != null) {
+                tripCodeToId.put(trip.tripCode(), trip.id());
+                tripCodeToId.put(trip.tripCode().toUpperCase(), trip.id());
+            }
 
             // Broadcast to WebSocket listeners so other devices immediately refresh
             if (webSocketBroadcastListener != null) {
@@ -546,8 +563,20 @@ public class TravelBuddyStateService {
         if (trip != null) {
             List<TripMember> updated = new ArrayList<>();
             boolean found = false;
+
+            String reqNorm = req.userId() != null ? req.userId().trim().toLowerCase().replace(" ", "") : "";
+            String reqShort = reqNorm.contains("@") ? reqNorm.substring(0, reqNorm.indexOf('@')) : reqNorm;
+
             for (TripMember m : trip.members()) {
-                if (m.id().equals(req.userId()) || m.name().equalsIgnoreCase(req.userId())) {
+                String mIdNorm = m.id() != null ? m.id().trim().toLowerCase().replace(" ", "") : "";
+                String mNameNorm = m.name() != null ? m.name().trim().toLowerCase().replace(" ", "") : "";
+                String mShort = mNameNorm.contains("@") ? mNameNorm.substring(0, mNameNorm.indexOf('@')) : mNameNorm;
+
+                boolean match = mIdNorm.equals(reqNorm) || mNameNorm.equals(reqNorm)
+                        || (!reqShort.isEmpty() && (mShort.equals(reqShort) || mIdNorm.equals(reqShort) || mNameNorm.equals(reqShort)))
+                        || (trip.members().size() == 1);
+
+                if (match) {
                     found = true;
                     updated.add(new TripMember(
                             m.id(),
@@ -565,10 +594,14 @@ public class TravelBuddyStateService {
                 }
             }
             if (!found) {
+                String displayName = req.userId() != null ? req.userId() : "Traveler";
+                if (displayName.contains("@")) displayName = displayName.substring(0, displayName.indexOf('@'));
+                if (displayName.startsWith("usr-")) displayName = "Traveler " + (updated.size() + 1);
+                long[] colors = {0xFF1A73E8L, 0xFFE91E63L, 0xFFFF9800L, 0xFF9C27B0L, 0xFF00897BL, 0xFF7CB342L};
                 updated.add(new TripMember(
                         req.userId(),
-                        req.userId(),
-                        0xFF27AE60L,
+                        displayName,
+                        colors[updated.size() % colors.length],
                         true,
                         req.latitude(),
                         req.longitude(),

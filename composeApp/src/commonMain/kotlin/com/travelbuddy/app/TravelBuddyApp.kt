@@ -477,20 +477,21 @@ internal fun TravelBuddyMain(
                                     }
                                     activeTripCover = draft.coverImage
                                     draft.coverImage?.let { tripCovers = tripCovers + (localTrip.id to it) }
-                                    selectedTab = AppTab.Home
+                                    selectedTab = AppTab.Track
                                     apiMessage = if (draft.reminderEnabled && draft.reportTime.isNotBlank()) {
                                         "Trip created (ID: $dynamicId). Reminder set for ${draft.rideDate.substringBefore(" - ")} at ${draft.reportTime}."
                                     } else "Trip created with dynamic ID: $dynamicId"
                                 } else scope.launch {
+                                    val myCreatorName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "Traveler" } }
                                     val request = CreateTripRequest(
                                         id = dynamicId,
                                         tripName = draft.title,
                                         source = draft.source,
                                         destination = draft.destination,
                                         dates = draft.rideDate.ifBlank { "Planned" },
-                                        createdBy = "usr-${currentUserName.hashCode()}",
+                                        createdBy = myCreatorName,
                                         coverImage = draft.coverImage,
-                                        members = tripMembers.map { it.name },
+                                        members = listOf(myCreatorName),
                                         vehicleType = draft.vehicleType
                                     )
                                     repository.createTrip(request)
@@ -501,7 +502,7 @@ internal fun TravelBuddyMain(
                                             members = finalTrip.members
                                             activeTripCover = draft.coverImage ?: trip.coverImage
                                             draft.coverImage?.let { tripCovers = tripCovers + (trip.id to it) }
-                                            selectedTab = AppTab.Home
+                                            selectedTab = AppTab.Track
                                             apiMessage = "Trip created live on Render server! (ID: ${trip.id})"
                                         }
                                         .onFailure { apiMessage = "Could not create trip: ${it.message ?: "unknown error"}" }
@@ -509,52 +510,35 @@ internal fun TravelBuddyMain(
                             },
                             onJoinById = { enteredId ->
                                 val cleanId = enteredId.trim()
-                                val existing = trips.firstOrNull { it.id.equals(cleanId, ignoreCase = true) }
-                                if (existing != null) {
-                                    val updatedMembers = if (existing.members.none { it.name.equals(currentUserName, ignoreCase = true) }) {
-                                        existing.members + TripMember("usr-${currentUserName.hashCode()}", currentUserName, 0xFF1D64F2L, true)
-                                    } else existing.members
-                                    val updatedTrip = existing.copy(members = updatedMembers)
-                                    activeTrip = updatedTrip
-                                    members = updatedMembers
-                                    selectedTab = AppTab.Track
-                                    apiMessage = "Connected to '${updatedTrip.name}' (ID: ${updatedTrip.id})! Tracking live."
-                                } else {
-                                    scope.launch {
-                                        var matched: Trip? = null
-                                        repository.getTrips().onSuccess { fetched ->
-                                            matched = fetched.firstOrNull { it.id.equals(cleanId, ignoreCase = true) }
-                                        }
-                                        if (matched != null) {
-                                            val t = matched!!
-                                            val updatedMembers = if (t.members.none { it.name.equals(currentUserName, ignoreCase = true) }) {
-                                                t.members + TripMember("usr-${currentUserName.hashCode()}", currentUserName, 0xFF1D64F2L, true)
-                                            } else t.members
-                                            val finalTrip = t.copy(members = updatedMembers)
-                                            trips = trips + finalTrip
-                                            activeTrip = finalTrip
-                                            members = updatedMembers
+                                val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "Traveler" } }
+                                scope.launch {
+                                    repository.joinTrip(cleanId, myName, myName)
+                                        .onSuccess { joinedTrip ->
+                                            val clean = deduplicateTripMembers(joinedTrip.members, myName)
+                                            val synced = joinedTrip.copy(members = clean)
+                                            trips = trips.filterNot { it.id == synced.id } + synced
+                                            activeTrip = synced
+                                            members = clean
                                             selectedTab = AppTab.Track
-                                            apiMessage = "Joined '${finalTrip.name}' (ID: ${finalTrip.id})! Live tracking active."
-                                        } else {
-                                            val myMember = TripMember("usr-${currentUserName.hashCode()}", currentUserName, 0xFF1D64F2L, true)
-                                            val buddyMember = TripMember("usr-${cleanId.hashCode()}", "Traveler (${cleanId.takeLast(4)})", 0xFF27AE60L, true)
-                                            val newSyncedTrip = Trip(
-                                                id = cleanId,
-                                                name = "Trip: $cleanId",
-                                                source = activeTrip?.source ?: "Bengaluru",
-                                                destination = activeTrip?.destination ?: "",
-                                                dates = "Active Live",
-                                                status = TripStatus.LIVE,
-                                                members = listOf(myMember, buddyMember)
-                                            )
-                                            trips = trips + newSyncedTrip
-                                            activeTrip = newSyncedTrip
-                                            members = newSyncedTrip.members
-                                            selectedTab = AppTab.Track
-                                            apiMessage = "Synced with Trip ID $cleanId! Tracking each other live."
+                                            apiMessage = "Joined '${synced.name}' (${clean.size} travelers)! Live tracking active."
                                         }
-                                    }
+                                        .onFailure {
+                                            repository.getTrips().onSuccess { fetched ->
+                                                val matched = fetched.firstOrNull { it.id.equals(cleanId, ignoreCase = true) || it.tripCode.equals(cleanId, ignoreCase = true) }
+                                                if (matched != null) {
+                                                    val updatedMembers = if (matched.members.none { it.name.trim().lowercase().substringBefore("@") == myName.trim().lowercase().substringBefore("@") }) {
+                                                        matched.members + TripMember(myName, myName, 0xFF1D64F2L, true)
+                                                    } else matched.members
+                                                    val clean = deduplicateTripMembers(updatedMembers, myName)
+                                                    val finalTrip = matched.copy(members = clean)
+                                                    trips = trips.filterNot { it.id == finalTrip.id } + finalTrip
+                                                    activeTrip = finalTrip
+                                                    members = clean
+                                                    selectedTab = AppTab.Track
+                                                    apiMessage = "Joined '${finalTrip.name}' (ID: ${finalTrip.id})! Live tracking active."
+                                                }
+                                            }
+                                        }
                                 }
                             }
                         )
@@ -2612,12 +2596,12 @@ private fun TrackingScreen(
             val (srcLat, srcLng) = LocationCoordinateResolver.resolveCoordinates(activeTrip?.source ?: "Bengaluru")
             val uploadLat = liveLoc?.latitude ?: srcLat
             val uploadLng = liveLoc?.longitude ?: srcLng
-            val uploadSpeed = if (liveLoc != null && liveLoc.speedKmh > 0) liveLoc.speedKmh else 42.0
+            val uploadSpeed = liveLoc?.speedKmh ?: 0.0
 
             repository?.updateLocation(
                 LocationUpdateRequest(
                     tripId = currentTripId,
-                    userId = myId,
+                    userId = myName.ifBlank { myId },
                     latitude = uploadLat,
                     longitude = uploadLng,
                     speed = uploadSpeed,
@@ -2629,17 +2613,17 @@ private fun TrackingScreen(
             // Pull live trip members so User A on Phone 1 sees User B when User B joins on Phone 2!
             repository?.getTrips()?.onSuccess { allTrips ->
                 val serverTrip = allTrips.firstOrNull {
-                    it.id.equals(currentTripId, ignoreCase = true) || it.tripCode.equals(currentTripId, ignoreCase = true)
+                    it.id.equals(currentTripId, ignoreCase = true) || 
+                    it.tripCode.equals(currentTripId, ignoreCase = true) ||
+                    (activeTrip != null && (it.id.equals(activeTrip.tripCode, ignoreCase = true) || it.tripCode.equals(activeTrip.id, ignoreCase = true)))
                 }
                 if (serverTrip != null && serverTrip.members.isNotEmpty()) {
                     val cleanList = deduplicateTripMembers(serverTrip.members, myName)
-                    if (cleanList.size != activeBuddies.size || cleanList != activeBuddies) {
-                        activeBuddies = cleanList
-                        onTripUpdated?.invoke(serverTrip.copy(members = cleanList))
-                    }
+                    activeBuddies = cleanList
+                    onTripUpdated?.invoke(serverTrip.copy(members = cleanList))
                 }
             }
-            delay(3500)
+            delay(2000)
         }
     }
 
@@ -2817,7 +2801,7 @@ private fun TrackingScreen(
 
                                                 scope.launch {
                                                     // Call remote joinTrip so the server registers this device into the trip!
-                                                    repository?.joinTrip(inputCode, myId, myName)
+                                                    repository?.joinTrip(inputCode, myName, myName)
                                                         ?.onSuccess { joinedTrip ->
                                                             val clean = deduplicateTripMembers(joinedTrip.members, myName)
                                                             activeBuddies = clean
@@ -2825,6 +2809,22 @@ private fun TrackingScreen(
                                                             onTripUpdated?.invoke(joinedTrip.copy(members = clean))
                                                             codeStatusMessage = "Successfully joined '${joinedTrip.name}' (${clean.size} travelers)! Live tracking active."
                                                             joinCodeInput = ""
+
+                                                            // Push immediate first live GPS location packet
+                                                            val freshLoc = PlatformLocation.getCurrentLocation()
+                                                            if (freshLoc != null) {
+                                                                repository?.updateLocation(
+                                                                    LocationUpdateRequest(
+                                                                        tripId = joinedTrip.id,
+                                                                        userId = myName,
+                                                                        latitude = freshLoc.latitude,
+                                                                        longitude = freshLoc.longitude,
+                                                                        speed = freshLoc.speedKmh,
+                                                                        battery = PlatformBattery.getBatteryLevel(),
+                                                                        timestamp = System.currentTimeMillis()
+                                                                    )
+                                                                )
+                                                            }
                                                         }
                                                         ?.onFailure {
                                                             // Fallback search across remote trips
@@ -3358,9 +3358,9 @@ private fun RiderDetailsTable(
                             (index == 0 && buddies.none { it.name.trim().lowercase().substringBefore("@") == myNorm })
 
                     val speedKmh = if (isMe) {
-                        if (currentUserSpeedKmh > 0) currentUserSpeedKmh.roundToInt() else 0
+                        currentUserSpeedKmh.roundToInt()
                     } else {
-                        buddy.speedKmh?.roundToInt() ?: (48 + ((index * 7 + telemetryTick) % 18))
+                        buddy.speedKmh?.roundToInt() ?: 0
                     }
 
                     val distBetweenKm: Double = if (isMe) {
@@ -3368,14 +3368,16 @@ private fun RiderDetailsTable(
                     } else if (buddy.latitude != null && buddy.longitude != null && currentUserLat != 0.0 && currentUserLng != 0.0) {
                         haversineDistanceKm(currentUserLat, currentUserLng, buddy.latitude, buddy.longitude)
                     } else {
-                        (3.2 + (index * 4.5) + ((telemetryTick % 10) * 0.05))
+                        0.0
                     }
 
                     val lastUpdateText = if (isMe) {
                         "Just now"
-                    } else {
-                        val sec = ((telemetryTick * 2 + index * 3) % 20) + 1
+                    } else if (buddy.latitude != null) {
+                        val sec = ((telemetryTick * 2 + index * 3) % 15) + 1
                         "$sec sec ago"
+                    } else {
+                        "Waiting for GPS"
                     }
 
                     val color = riderColors[index % riderColors.size]
@@ -3457,7 +3459,7 @@ private fun RiderDetailsTable(
 
                         // Distance from You
                         Text(
-                            text = if (isMe) "—" else formatDistance(distBetweenKm),
+                            text = if (isMe) "—" else if (buddy.latitude != null && buddy.longitude != null) formatDistance(distBetweenKm) else "Connecting...",
                             modifier = Modifier.width(135.dp),
                             fontWeight = if (isMe) FontWeight.Normal else FontWeight.Bold,
                             fontSize = 13.sp,
