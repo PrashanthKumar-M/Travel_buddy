@@ -186,6 +186,25 @@ fun TravelBuddyApp(
                     val sessionName = if (existingName.isNotBlank() && existingName != "Traveler") existingName else defaultName
                     SessionManager.saveSession("tb_jwt_${identifier.hashCode()}", identifier, sessionName, identifier, isEmailAuth)
                     stage = AuthStage.Main
+                },
+                onForgotPassword = { identifier, isEmail ->
+                    loginIdentifier = identifier
+                    isEmailAuth = isEmail
+                    val generated = (100000..999999).random().toString()
+                    dynamicOtp = generated
+                    if (!isEmail) {
+                        dispatchDeviceOtpNotification(identifier, generated)
+                    }
+                    coroutineScope.launch {
+                        val phoneArg = if (!isEmail) identifier else null
+                        val emailArg = if (isEmail) identifier else null
+                        repository.requestOtp(phone = phoneArg, email = emailArg).onSuccess { remoteOtp ->
+                            if (!remoteOtp.isNullOrBlank()) {
+                                dynamicOtp = remoteOtp
+                            }
+                        }
+                    }
+                    stage = AuthStage.OtpVerification
                 }
             )
         }
@@ -617,7 +636,8 @@ private fun LoginScreen(
     initialIsEmail: Boolean,
     onBack: () -> Unit,
     onSendOtp: (String, Boolean) -> Unit,
-    onPasswordLoginSuccess: (String, String) -> Unit
+    onPasswordLoginSuccess: (String, String) -> Unit,
+    onForgotPassword: (String, Boolean) -> Unit
 ) {
     var loginMethod by remember { mutableStateOf(if (initialIsEmail) LoginMethod.Email else LoginMethod.Mobile) }
     var mobileNumber by remember { mutableStateOf(if (!initialIsEmail) initialIdentifier else "") }
@@ -941,6 +961,38 @@ private fun LoginScreen(
                         )
                     }
                 }
+            }
+
+            // Clickable "Forgot Password?" right below the password field
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, end = 2.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Text(
+                    text = "Forgot Password?",
+                    color = BrandBlue,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable {
+                        val isEmail = (loginMethod == LoginMethod.Email)
+                        val target = if (isEmail) emailAddress.trim() else mobileNumber.trim()
+                        if (isEmail) {
+                            if (target.isBlank() || !target.contains("@") || !target.contains(".")) {
+                                errorMessage = "Please enter your email address to reset password"
+                                return@clickable
+                            }
+                        } else {
+                            if (target.length < 10) {
+                                errorMessage = "Please enter your 10-digit mobile number to reset password"
+                                return@clickable
+                            }
+                        }
+                        errorMessage = null
+                        onForgotPassword(target, isEmail)
+                    }
+                )
             }
         }
 

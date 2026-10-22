@@ -290,27 +290,48 @@ public class TravelBuddyStateService {
     }
 
     // --- CHAT API ---
+    public String resolveTripId(String inputId) {
+        if (inputId == null || inputId.isBlank()) return inputId;
+        String clean = inputId.trim();
+        if (tripCodeToId.containsKey(clean)) return tripCodeToId.get(clean);
+        for (Trip t : trips.values()) {
+            if (t.id().equalsIgnoreCase(clean) || t.tripCode().equalsIgnoreCase(clean)) {
+                return t.id();
+            }
+        }
+        return clean;
+    }
+
     public List<ChatMessage> getChatMessages(String tripId) {
-        return tripChats.getOrDefault(tripId, Collections.emptyList());
+        String resolved = resolveTripId(tripId);
+        List<ChatMessage> list = tripChats.get(resolved);
+        if (list == null && !resolved.equals(tripId)) {
+            list = tripChats.get(tripId);
+        }
+        return list != null ? list : Collections.emptyList();
     }
 
     public ChatMessage sendChatMessage(String tripId, SendMessageRequest req) {
+        String resolved = resolveTripId(tripId);
         String msgId = "msg-" + UUID.randomUUID().toString().substring(0, 8);
         ChatMessage msg = new ChatMessage(
                 msgId,
-                tripId,
+                resolved,
                 req.senderId() != null ? req.senderId() : "usr-local",
                 req.senderName() != null ? req.senderName() : "Traveler",
                 req.text(),
                 System.currentTimeMillis()
         );
-        tripChats.computeIfAbsent(tripId, k -> new CopyOnWriteArrayList<>()).add(msg);
+        tripChats.computeIfAbsent(resolved, k -> new CopyOnWriteArrayList<>()).add(msg);
+        if (!resolved.equals(tripId)) {
+            tripChats.computeIfAbsent(tripId, k -> new CopyOnWriteArrayList<>()).add(msg);
+        }
 
         // Broadcast to WebSocket listeners
         if (webSocketBroadcastListener != null) {
             String json = String.format(
                     "{\"type\":\"chat\",\"tripId\":\"%s\",\"id\":\"%s\",\"senderId\":\"%s\",\"senderName\":\"%s\",\"text\":\"%s\",\"timestamp\":%d}",
-                    tripId, msg.id(), msg.senderId(), msg.senderName(), msg.text().replace("\"", "\\\""), msg.timestamp()
+                    resolved, msg.id(), msg.senderId(), msg.senderName(), msg.text().replace("\"", "\\\""), msg.timestamp()
             );
             webSocketBroadcastListener.accept(json);
         }
@@ -507,8 +528,9 @@ public class TravelBuddyStateService {
 
     // --- LOCATION TRACKING ---
     public void updateLocation(LocationUpdateRequest req) {
+        String resolvedId = resolveTripId(req.tripId());
         LocationEvent event = new LocationEvent(
-                req.tripId(),
+                resolvedId,
                 req.userId(),
                 req.latitude(),
                 req.longitude(),
@@ -518,9 +540,9 @@ public class TravelBuddyStateService {
                 req.heading()
         );
 
-        tripLocations.computeIfAbsent(req.tripId(), k -> new CopyOnWriteArrayList<>()).add(event);
+        tripLocations.computeIfAbsent(resolvedId, k -> new CopyOnWriteArrayList<>()).add(event);
 
-        Trip trip = trips.get(req.tripId());
+        Trip trip = trips.get(resolvedId);
         if (trip != null) {
             List<TripMember> updated = new ArrayList<>();
             boolean found = false;
@@ -582,7 +604,7 @@ public class TravelBuddyStateService {
     }
 
     public List<TripMember> getLiveMembers(String tripId) {
-        Trip trip = trips.get(tripId);
+        Trip trip = trips.get(resolveTripId(tripId));
         return trip != null ? trip.members() : Collections.emptyList();
     }
 

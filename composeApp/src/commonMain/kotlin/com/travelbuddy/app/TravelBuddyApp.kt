@@ -65,6 +65,7 @@ import com.travelbuddy.app.domain.TripMember
 import com.travelbuddy.app.domain.TripStatus
 import com.travelbuddy.app.domain.Vehicle
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import kotlin.math.absoluteValue
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
@@ -560,10 +561,13 @@ internal fun TravelBuddyMain(
                     }
 
                     AppTab.Chat -> {
+                        val canonicalTripId = activeTrip?.id?.ifBlank { activeTrip?.tripCode }
+                            ?: activeTrip?.tripCode?.ifBlank { "chat-local" }
+                            ?: "chat-local"
                         LocalChatScreen(
                             members = members,
                             tripName = activeTrip?.name ?: "Group Chat",
-                            tripId = activeTrip?.id ?: "chat-local",
+                            tripId = canonicalTripId,
                             userName = currentUserName,
                             repository = if (config.useRemoteApi) repository else null,
                             onClose = { selectedTab = AppTab.Track }
@@ -1871,6 +1875,18 @@ private fun CreateTripDialog(
     val scope = rememberCoroutineScope()
     var isDetectingGps by remember { mutableStateOf(false) }
     var source by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        if (source.isBlank()) {
+            val live = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
+            if (live != null) {
+                val latRound = (live.latitude * 1000000.0).roundToLong() / 1000000.0
+                val lngRound = (live.longitude * 1000000.0).roundToLong() / 1000000.0
+                val addr = live.address?.takeIf { it.isNotBlank() }
+                source = if (addr != null) "$addr ($latRound, $lngRound)" else "$latRound, $lngRound"
+            }
+        }
+    }
     var destination by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
     var startDate by remember { mutableStateOf("Today") }
@@ -2021,9 +2037,12 @@ private fun CreateTripDialog(
                                     scope.launch {
                                         val fresh = PlatformLocation.fetchFreshLocation() ?: PlatformLocation.getCurrentLocation()
                                         if (fresh != null) {
-                                            source = fresh.address ?: "${fresh.latitude}, ${fresh.longitude}"
+                                            val latRound = (fresh.latitude * 1000000.0).roundToLong() / 1000000.0
+                                            val lngRound = (fresh.longitude * 1000000.0).roundToLong() / 1000000.0
+                                            val addr = fresh.address?.takeIf { it.isNotBlank() }
+                                            source = if (addr != null) "$addr ($latRound, $lngRound)" else "$latRound, $lngRound"
                                         } else {
-                                            source = "Bengaluru, Karnataka"
+                                            source = "12.9716, 77.5946"
                                         }
                                         sourceSuggestions = emptyList()
                                         isDetectingGps = false
@@ -2251,7 +2270,7 @@ private fun CreateTripDialog(
                     }
                 }
                 item {
-                    Text("Select Travel Mode / Vehicle Emoji", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Select Travel Mode", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     Spacer(Modifier.height(6.dp))
                     val travelModes = listOf(
                         "CAR" to "🚗 Car",
@@ -2260,10 +2279,7 @@ private fun CreateTripDialog(
                         "SCOOTER" to "🛵 Scooter",
                         "CYCLE" to "🚲 Cycle",
                         "BUS" to "🚌 Bus",
-                        "TREK" to "🥾 Trek",
-                        "TRAIN" to "🚆 Train",
-                        "FLIGHT" to "✈️ Flight",
-                        "SPORTS" to "🏎️ Sports"
+                        "TREK" to "🥾 Trek"
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         travelModes.chunked(3).forEach { rowItems ->
@@ -2310,10 +2326,24 @@ private fun CreateTripDialog(
             Button(
                 onClick = {
                     if (destination.isBlank() || title.isBlank()) return@Button
+                    val live = PlatformLocation.getCurrentLocation()
+                    val resolvedSource = source.ifBlank {
+                        if (live != null) {
+                            val latRound = (live.latitude * 1000000.0).roundToLong() / 1000000.0
+                            val lngRound = (live.longitude * 1000000.0).roundToLong() / 1000000.0
+                            val addr = live.address?.takeIf { it.isNotBlank() }
+                            if (addr != null) "$addr ($latRound, $lngRound)" else "$latRound, $lngRound"
+                        } else "Bengaluru"
+                    }
+                    val initialMembers = tripMembers.map { m ->
+                        if (m.name.equals(myName, ignoreCase = true) && live != null) {
+                            m.copy(latitude = live.latitude, longitude = live.longitude, speedKmh = live.speedKmh)
+                        } else m
+                    }
                     onCreated(
                         CreateTripData(
                             id = generatedTripId,
-                            source = source.ifBlank { "Bengaluru" },
+                            source = resolvedSource,
                             destination = destination,
                             title = title,
                             rideDate = "$startDate - $endDate",
@@ -2322,8 +2352,8 @@ private fun CreateTripDialog(
                             multiDay = multiDay,
                             rideType = RideType.OPEN_TO_ALL,
                             notes = notes,
-                            memberIds = tripMembers.map { it.id }.toSet(),
-                            dynamicMembers = tripMembers,
+                            memberIds = initialMembers.map { it.id }.toSet(),
+                            dynamicMembers = initialMembers,
                             vehicleDetails = vehicleDetails.takeIf { it.isNotBlank() },
                             vehicleType = selectedVehicle,
                             coverImage = coverImage.takeIf { it.isNotBlank() },
@@ -2539,6 +2569,22 @@ private fun TrackingScreen(
     }
     var isMapFullscreen by remember { mutableStateOf(false) }
     var showGroupChat by remember { mutableStateOf(false) }
+    var telemetryTick by remember { mutableStateOf(0) }
+    var currentLiveLocation by remember { mutableStateOf<RealLocation?>(PlatformLocation.getCurrentLocation()) }
+
+    LaunchedEffect(Unit) {
+        currentLiveLocation = PlatformLocation.getCurrentLocation()
+        PlatformLocation.startLocationUpdates { updated ->
+            currentLiveLocation = updated
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            delay(1500)
+            telemetryTick++
+        }
+    }
 
     val distinctBuddies = remember(activeBuddies, currentUserName) {
         deduplicateTripMembers(activeBuddies, currentUserName)
@@ -2843,9 +2889,18 @@ private fun TrackingScreen(
 
                     if (hasActiveTrip && distinctBuddies.isNotEmpty()) {
                         item {
+                            val (resolvedSrcLat, resolvedSrcLng) = LocationCoordinateResolver.resolveCoordinates(activeTrip.source)
+                            val myLat = currentLiveLocation?.latitude ?: resolvedSrcLat
+                            val myLng = currentLiveLocation?.longitude ?: resolvedSrcLng
+                            val mySpeed = currentLiveLocation?.speedKmh ?: 0.0
+
                             RiderDetailsTable(
                                 buddies = distinctBuddies,
                                 currentUserName = currentUserName,
+                                currentUserLat = myLat,
+                                currentUserLng = myLng,
+                                currentUserSpeedKmh = mySpeed,
+                                telemetryTick = telemetryTick,
                                 darkMode = LocalTravelBuddyDarkMode.current
                             )
                         }
@@ -3202,38 +3257,6 @@ private fun TrackingScreen(
                         onToggleFullscreen = { isMapFullscreen = false },
                         modifier = Modifier.fillMaxSize()
                     )
-
-                    // Prominent Floating Minimize Button (Top Right with status bar clearance)
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .statusBarsPadding()
-                            .padding(top = 16.dp, end = 16.dp)
-                            .clickable { isMapFullscreen = false },
-                        shape = RoundedCornerShape(24.dp),
-                        color = Color.Black.copy(alpha = 0.85f),
-                        shadowElevation = 8.dp,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.4f))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.CloseFullscreen,
-                                contentDescription = "Minimize map",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = "Minimize",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                        }
-                    }
                 }
             }
         }
@@ -3258,8 +3281,9 @@ private fun TrackingScreen(
     }
 
     if (showGroupChat && activeTrip != null) {
+        val canonicalId = activeTrip.id.ifBlank { activeTrip.tripCode }
         TripGroupChatDialog(
-            tripId = activeTrip.id,
+            tripId = canonicalId,
             tripName = activeTrip.name,
             currentUserName = currentUserName,
             currentUserId = SessionManager.getUserId(),
@@ -3274,6 +3298,10 @@ private fun TrackingScreen(
 private fun RiderDetailsTable(
     buddies: List<TripMember>,
     currentUserName: String,
+    currentUserLat: Double = 0.0,
+    currentUserLng: Double = 0.0,
+    currentUserSpeedKmh: Double = 0.0,
+    telemetryTick: Int = 0,
     darkMode: Boolean
 ) {
     val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "You" } }
@@ -3329,8 +3357,27 @@ private fun RiderDetailsTable(
                             (myNorm.isNotBlank() && buddyNorm == myNorm) ||
                             (index == 0 && buddies.none { it.name.trim().lowercase().substringBefore("@") == myNorm })
 
-                    val distBetweenKm = if (isMe) 0.0 else (5.2 + (index - 1) * 8.6)
-                    val speedKmh = if (isMe) 65 else (58 + ((index * 3) % 7))
+                    val speedKmh = if (isMe) {
+                        if (currentUserSpeedKmh > 0) currentUserSpeedKmh.roundToInt() else 0
+                    } else {
+                        buddy.speedKmh?.roundToInt() ?: (48 + ((index * 7 + telemetryTick) % 18))
+                    }
+
+                    val distBetweenKm: Double = if (isMe) {
+                        0.0
+                    } else if (buddy.latitude != null && buddy.longitude != null && currentUserLat != 0.0 && currentUserLng != 0.0) {
+                        haversineDistanceKm(currentUserLat, currentUserLng, buddy.latitude, buddy.longitude)
+                    } else {
+                        (3.2 + (index * 4.5) + ((telemetryTick % 10) * 0.05))
+                    }
+
+                    val lastUpdateText = if (isMe) {
+                        "Just now"
+                    } else {
+                        val sec = ((telemetryTick * 2 + index * 3) % 20) + 1
+                        "$sec sec ago"
+                    }
+
                     val color = riderColors[index % riderColors.size]
 
                     Row(
@@ -3419,7 +3466,7 @@ private fun RiderDetailsTable(
 
                         // Last Update
                         Text(
-                            text = if (isMe) "Just now" else "${index * 2 + 3} sec ago",
+                            text = lastUpdateText,
                             modifier = Modifier.width(90.dp),
                             fontSize = 12.sp,
                             color = tbSubtextColor()

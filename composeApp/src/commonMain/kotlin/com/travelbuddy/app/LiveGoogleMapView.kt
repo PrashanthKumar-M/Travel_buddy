@@ -184,7 +184,8 @@ fun LiveGoogleMapView(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .then(if (isFullscreen) Modifier.statusBarsPadding().padding(top = 8.dp) else Modifier.padding(top = 8.dp))
+                    .padding(horizontal = 10.dp),
                 shape = RoundedCornerShape(14.dp),
                 color = (if (darkMode) Color(0xFF1E293B) else Color.White).copy(alpha = 0.94f),
                 shadowElevation = 4.dp
@@ -232,16 +233,43 @@ fun LiveGoogleMapView(
                     }
 
                     if (onToggleFullscreen != null) {
-                        IconButton(
-                            onClick = onToggleFullscreen,
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                if (isFullscreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
-                                contentDescription = "Fullscreen",
-                                tint = Color(0xFF1A73E8),
-                                modifier = Modifier.size(20.dp)
-                            )
+                        if (isFullscreen) {
+                            Surface(
+                                shape = RoundedCornerShape(20.dp),
+                                color = if (darkMode) Color(0xFF334155) else Color(0xFF1E293B),
+                                modifier = Modifier.clickable(onClick = onToggleFullscreen)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Filled.FullscreenExit,
+                                        contentDescription = "Minimize",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = "Minimize",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        } else {
+                            IconButton(
+                                onClick = onToggleFullscreen,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.Fullscreen,
+                                    contentDescription = "Fullscreen",
+                                    tint = Color(0xFF1A73E8),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }

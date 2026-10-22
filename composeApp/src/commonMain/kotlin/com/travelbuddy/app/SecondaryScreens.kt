@@ -602,7 +602,7 @@ internal fun LocalChatScreen(
                     )
                 }
             }
-            delay(2000)
+            delay(1500)
         }
     }
 
