@@ -84,7 +84,7 @@ android {
         .getOrElse("wss://travel-buddy-3vz4.onrender.com/ws/live")
     val mapsApiKey = providers.gradleProperty("MAPS_API_KEY")
         .orElse(providers.environmentVariable("MAPS_API_KEY"))
-        .getOrElse("")
+        .getOrElse("AIzaSyBajIytr__LvhPpGz4Wlc3l9Rpn3YP-PqY")
 
     defaultConfig {
         buildConfigField("String", "TRAVEL_BUDDY_API_URL", "\"$apiBaseUrl\"")

@@ -20,6 +20,7 @@ object PlaceSearchService {
 
     private val httpClient = HttpClient()
     private val json = Json { ignoreUnknownKeys = true }
+    private const val GOOGLE_MAPS_API_KEY = "AIzaSyBajIytr__LvhPpGz4Wlc3l9Rpn3YP-PqY"
 
     // Popular destinations with pre-verified precise coordinates for instant auto-suggestions
     private val verifiedDestinations = listOf(
@@ -66,7 +67,41 @@ object PlaceSearchService {
             it.description.contains(clean, ignoreCase = true)
         }
 
-        // 2. Fetch live online search from Nominatim geocoder restricted to India & English
+        // 2. Query Official Google Places API with the configured Google Key
+        val googleMatches = if (GOOGLE_MAPS_API_KEY.isNotBlank()) {
+            try {
+                val googleUrl = "https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${clean.encodeURLParameter()}&components=country:in&key=$GOOGLE_MAPS_API_KEY"
+                val response: HttpResponse = httpClient.get(googleUrl)
+                if (response.status == HttpStatusCode.OK) {
+                    val root = json.parseToJsonElement(response.bodyAsText()).jsonObject
+                    val status = root["status"]?.jsonPrimitive?.contentOrNull
+                    if (status == "OK") {
+                        val preds = root["predictions"]?.jsonArray ?: JsonArray(emptyList())
+                        preds.mapNotNull { p ->
+                            val pObj = p.jsonObject
+                            val desc = pObj["description"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                            val structured = pObj["structured_formatting"]?.jsonObject
+                            val mainText = structured?.get("main_text")?.jsonPrimitive?.contentOrNull ?: desc.split(",").firstOrNull() ?: desc
+                            PlaceSuggestion(
+                                name = mainText,
+                                description = desc,
+                                latitude = 0.0,
+                                longitude = 0.0
+                            )
+                        }
+                    } else emptyList()
+                } else emptyList()
+            } catch (e: Exception) {
+                emptyList()
+            }
+        } else emptyList()
+
+        if (googleMatches.isNotEmpty()) {
+            val combined = (localMatches + googleMatches).distinctBy { it.name }
+            return@withContext combined.take(6)
+        }
+
+        // 3. Resilient fallback: India-restricted Nominatim geocoder (restricted strictly to India & English)
         val onlineMatches = try {
             val url = "https://nominatim.openstreetmap.org/search?q=${clean.encodeURLParameter()}&countrycodes=in&accept-language=en&format=json&addressdetails=1&limit=8"
             val response: HttpResponse = httpClient.get(url) {
