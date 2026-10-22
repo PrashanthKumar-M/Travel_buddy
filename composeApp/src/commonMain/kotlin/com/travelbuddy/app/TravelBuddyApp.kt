@@ -1976,7 +1976,12 @@ private fun CreateTripDialog(
                         ) {
                             TextButton(
                                 onClick = {
-                                    source = "Live Location (Bengaluru)"
+                                    val live = PlatformLocation.getCurrentLocation()
+                                    if (live != null) {
+                                        source = live.address ?: "${live.latitude}, ${live.longitude}"
+                                    } else {
+                                        source = "My Current Location"
+                                    }
                                     sourceSuggestions = emptyList()
                                 },
                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
@@ -2726,6 +2731,71 @@ private fun TrackingScreen(
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
+                            }
+                        }
+                    }
+
+                    if (activeBuddies.size >= 2) {
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0)
+                                )
+                            ) {
+                                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("📍 In-Between Travelers Distance Matrix", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = tbTextColor())
+                                    }
+                                    Text("Real-time relative distance between each participant in this trip", fontSize = 11.sp, color = tbSubtextColor())
+
+                                    for (i in 0 until activeBuddies.size - 1) {
+                                        val u1 = activeBuddies[i]
+                                        val u2 = activeBuddies[i + 1]
+                                        val u1Lat = u1.latitude ?: (12.9716 + i * 0.015)
+                                        val u1Lng = u1.longitude ?: (77.5946 + i * 0.012)
+                                        val u2Lat = u2.latitude ?: (12.9716 + (i + 1) * 0.015)
+                                        val u2Lng = u2.longitude ?: (77.5946 + (i + 1) * 0.012)
+                                        val pairDistKm = haversineDistanceKm(u1Lat, u1Lng, u2Lat, u2Lng)
+
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = (if (LocalTravelBuddyDarkMode.current) Color(0xFF0F172A) else Color(0xFFF8FAFC)),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(u1.name, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = tbTextColor())
+                                                    Spacer(Modifier.width(6.dp))
+                                                    Text("↔", fontSize = 13.sp, color = Blue, fontWeight = FontWeight.Bold)
+                                                    Spacer(Modifier.width(6.dp))
+                                                    Text(u2.name, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = tbTextColor())
+                                                }
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = Blue.copy(alpha = 0.12f)
+                                                ) {
+                                                    Text(
+                                                        formatDistance(pairDistKm),
+                                                        color = Blue,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 11.sp,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

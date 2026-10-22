@@ -122,7 +122,16 @@ object LocationCoordinateResolver {
         val clean = cityName.trim()
         if (clean.isBlank()) return Pair(fallbackLat, fallbackLng)
 
-        // 1. Direct coordinate parsing (e.g. "12.9716, 77.5946" or "12.9716 77.5946" or "q=12.9716,77.5946" or "@12.9716,77.5946")
+        // 1. Live / Current GPS location check
+        val lower = clean.lowercase()
+        if (lower.contains("current location") || lower.contains("live location") || lower == "my location") {
+            val live = PlatformLocation.getCurrentLocation()
+            if (live != null) {
+                return Pair(live.latitude, live.longitude)
+            }
+        }
+
+        // 2. Direct coordinate parsing (e.g. "12.9716, 77.5946" or "12.9716 77.5946" or "q=12.9716,77.5946" or "@12.9716,77.5946")
         val coordRegex = Regex("""(-?\d{1,3}\.\d+)[,\s/]+(-?\d{1,3}\.\d+)""")
         val match = coordRegex.find(clean)
         if (match != null) {
@@ -133,25 +142,31 @@ object LocationCoordinateResolver {
             }
         }
 
-        val lower = clean.lowercase()
+        // 3. Real Geocoding (Google Geocoder on Android: resolves exact home, street, building, or copy-pasted address)
+        try {
+            val geocoded = PlatformLocation.geocodeAddress(clean)
+            if (geocoded != null) {
+                return geocoded
+            }
+        } catch (_: Exception) {}
 
-        // 2. Direct match in dictionary
+        // 4. Direct match in dictionary
         cityCoordinates[lower]?.let { return it }
 
-        // 3. Comma-separated address token match (e.g. "MG Road, Indiranagar, Bengaluru, Karnataka 560038")
+        // 5. Comma-separated address token match (e.g. "MG Road, Indiranagar, Bengaluru, Karnataka 560038")
         val tokens = lower.split(',', '-', ';', ' ', '/').map { it.trim() }.filter { it.length >= 3 }
         for (token in tokens) {
             cityCoordinates[token]?.let { return it }
         }
 
-        // 4. Substring / contains match
+        // 6. Substring / contains match
         for ((name, coords) in cityCoordinates) {
             if (lower.contains(name) || name.contains(lower)) {
                 return coords
             }
         }
 
-        // 5. Fallback for unknown place: generate reproducible deterministic offset based on hash
+        // 7. Fallback for unknown place: generate reproducible deterministic offset based on hash
         val hash = abs(clean.hashCode())
         val latOffset = (hash % 100) / 100.0 * 2.0 - 1.0
         val lngOffset = ((hash / 100) % 100) / 100.0 * 2.0 - 1.0
