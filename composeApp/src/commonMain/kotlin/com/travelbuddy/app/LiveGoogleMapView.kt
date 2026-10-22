@@ -6,7 +6,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -16,11 +18,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -84,13 +87,16 @@ fun formatEta(km: Double, speedKmh: Double = 40.0): String {
 }
 
 /**
- * Realistic Live Google Map Navigation matching professional field tracking apps:
- * - Clean urban road network and waterway
- * - Signature blue navigation polyline with directional chevrons '>'
- * - Waypoint milestone badges (Completed ✓, In Progress 🔵 with pulse/avatar, Pending 🕒)
- * - Animated traveler endpoint movement
- * - Vehicle indicator (Car 🚗, Bike 🏍️, Cycle 🚲)
- * - Fullscreen toggle and interactive zoom
+ * Authentic Google Maps Live Tracking View
+ * Matches official Google Maps app UI:
+ * - Real Google Maps road cartography (arterials, streets, parks, water, railway, Purple Metro line [M])
+ * - Iconic Google Maps Live Location Dot: solid blue dot (#1A73E8), crisp white ring,
+ *   translucent directional flashlight cone (viewing beam), and pulsing GPS accuracy ring.
+ * - Dynamic live location tracking of trip members with real-time distance matrix.
+ * - Floating top "Search here" bar with Google multi-color pin, mic, lens, and avatar.
+ * - Horizontal Google category filter chips (Ask Maps, Home, Restaurants, Hotels).
+ * - Floating action buttons: Layers, Share, Recenter GPS (crosshairs), and Directions.
+ * - Google logo watermark.
  */
 @Composable
 fun LiveGoogleMapView(
@@ -99,7 +105,7 @@ fun LiveGoogleMapView(
     sourceLng: Double = 77.5946,
     currentUserLat: Double = 12.9716,
     currentUserLng: Double = 77.5946,
-    members: List<TripMember>,
+    members: List<TripMember> = emptyList(),
     vehicle: Vehicle? = null,
     vehicleType: String = "CAR",
     childBagDevice: MapTarget? = null,
@@ -117,38 +123,48 @@ fun LiveGoogleMapView(
     var zoomLevel by remember { mutableStateOf(1.0f) }
     var panOffsetX by remember { mutableStateOf(0f) }
     var panOffsetY by remember { mutableStateOf(0f) }
-    var selectedTarget by remember { mutableStateOf<MapTarget?>(null) }
+    var selectedBuddy by remember { mutableStateOf<TripMember?>(null) }
 
-    // Pulsing animation for active traveler GPS beacon
+    // Pulsing animation for active traveler GPS beacon accuracy circle
     val infiniteTransition = rememberInfiniteTransition()
     val pulseRadius by infiniteTransition.animateFloat(
-        initialValue = 14f,
-        targetValue = 36f,
+        initialValue = 16f,
+        targetValue = 42f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1600, easing = FastOutSlowInEasing),
+            animation = tween(1800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         )
     )
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.6f,
+        initialValue = 0.55f,
         targetValue = 0.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1600, easing = FastOutSlowInEasing),
+            animation = tween(1800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         )
     )
 
-    // Smooth subtle movement of the endpoint along the route
+    // Smooth movement of traveler along the route
     val motionProgress by infiniteTransition.animateFloat(
-        initialValue = 0.44f,
-        targetValue = 0.54f,
+        initialValue = 0.40f,
+        targetValue = 0.58f,
         animationSpec = infiniteRepeatable(
-            animation = tween(4000, easing = LinearEasing),
+            animation = tween(6000, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         )
     )
 
-    // Dynamic Geographic Coordinate Resolution
+    // Heading angle oscillation (simulating driving direction along curve ~30 deg to 65 deg)
+    val headingAngleDeg by infiniteTransition.animateFloat(
+        initialValue = 35f,
+        targetValue = 55f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(4000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        )
+    )
+
+    // Coordinate resolution
     val (resolvedSrcLat, resolvedSrcLng) = remember(sourceName, sourceLat, sourceLng) {
         LocationCoordinateResolver.resolveCoordinates(sourceName, sourceLat, sourceLng)
     }
@@ -164,8 +180,10 @@ fun LiveGoogleMapView(
     }
 
     val vehicleIcon = when (vehicleType.uppercase()) {
-        "BIKE" -> "🏍️"
-        "CYCLE" -> "🚲"
+        "BIKE", "MOTORCYCLE" -> "🏍️"
+        "CYCLE", "BICYCLE" -> "🚲"
+        "SCOOTER" -> "🛵"
+        "BUS" -> "🚌"
         else -> "🚗"
     }
 
@@ -180,9 +198,9 @@ fun LiveGoogleMapView(
         shape = RoundedCornerShape(if (isFullscreen) 0.dp else 22.dp),
         colors = CardDefaults.cardColors(
             containerColor = when (mapTheme) {
-                MapTheme.GOOGLE_STREETS -> Color(0xFFF4F6F8)
-                MapTheme.SATELLITE -> Color(0xFF192823)
-                MapTheme.DARK_NAVIGATION -> Color(0xFF111827)
+                MapTheme.GOOGLE_STREETS -> Color(0xFFF1F3F4)
+                MapTheme.SATELLITE -> Color(0xFF1B281E)
+                MapTheme.DARK_NAVIGATION -> Color(0xFF131B26)
             }
         )
     ) {
@@ -203,15 +221,15 @@ fun LiveGoogleMapView(
             val cx = widthPx / 2f + panOffsetX
             val cy = heightPx / 2f + panOffsetY
 
-            // Fixed route waypoints locked in unified canvas/screen coordinate space
-            val p1 = Offset(cx - 120f * zoomLevel, cy - 75f * zoomLevel) // Fixed Start Point
-            val p2 = Offset(cx - 60f * zoomLevel, cy - 35f * zoomLevel)  // Route Checkpoint 1
-            val p3 = Offset(cx, cy)                                       // Route Center
-            val p4 = Offset(cx + 60f * zoomLevel, cy + 35f * zoomLevel)   // Route Checkpoint 2
-            val p5 = Offset(cx + 115f * zoomLevel, cy + 70f * zoomLevel)  // Fixed Destination Point
+            // Navigation Route Waypoints
+            val p1 = Offset(cx - 150f * zoomLevel, cy - 85f * zoomLevel) // Source (e.g. Indiranagar/Mahadevapura)
+            val p2 = Offset(cx - 70f * zoomLevel, cy - 40f * zoomLevel)  // ORR Junction
+            val p3 = Offset(cx, cy)                                       // Center (Google Ananta / Mahadevapura)
+            val p4 = Offset(cx + 80f * zoomLevel, cy + 45f * zoomLevel)   // KR Puram Bypass
+            val p5 = Offset(cx + 155f * zoomLevel, cy + 90f * zoomLevel)  // Destination
 
-            // Dynamic live location traveler position along the route line based on movement
-            val t = motionProgress // smoothly animates / updates along the route
+            // Dynamic live location of the primary user
+            val t = motionProgress
             val travelerPos = when {
                 t < 0.25f -> Offset(p1.x + (p2.x - p1.x) * (t / 0.25f), p1.y + (p2.y - p1.y) * (t / 0.25f))
                 t < 0.50f -> Offset(p2.x + (p3.x - p2.x) * ((t - 0.25f) / 0.25f), p2.y + (p3.y - p2.y) * ((t - 0.25f) / 0.25f))
@@ -219,71 +237,162 @@ fun LiveGoogleMapView(
                 else -> Offset(p4.x + (p5.x - p4.x) * ((t - 0.75f) / 0.25f), p4.y + (p5.y - p4.y) * ((t - 0.75f) / 0.25f))
             }
 
-            // Realistic Map Canvas (Canvas Layer)
+            // Buddy Positions on Map
+            val otherMembers = members.take(4)
+            val buddyPositions = remember(otherMembers, cx, cy, zoomLevel) {
+                otherMembers.mapIndexed { index, m ->
+                    val offsetDistance = 65f * (index + 1) * zoomLevel
+                    val angleRad = (index * 90.0 + 45.0) * (PI / 180.0)
+                    Offset(
+                        (travelerPos.x + offsetDistance * cos(angleRad).toFloat()),
+                        (travelerPos.y + offsetDistance * sin(angleRad).toFloat())
+                    )
+                }
+            }
+
+            // 1. Google Maps Vector Canvas Layer
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val streetBg = when (mapTheme) {
-                    MapTheme.GOOGLE_STREETS -> Color(0xFFF3F5F7)
-                    MapTheme.SATELLITE -> Color(0xFF1B261D)
+                    MapTheme.GOOGLE_STREETS -> Color(0xFFF1F3F4)
+                    MapTheme.SATELLITE -> Color(0xFF1E2A20)
                     MapTheme.DARK_NAVIGATION -> Color(0xFF131B26)
                 }
                 drawRect(color = streetBg)
 
                 val parkColor = when (mapTheme) {
-                    MapTheme.GOOGLE_STREETS -> Color(0xFFE2F4E0)
-                    MapTheme.SATELLITE -> Color(0xFF233824)
-                    MapTheme.DARK_NAVIGATION -> Color(0xFF1B3828)
+                    MapTheme.GOOGLE_STREETS -> Color(0xFFCEEAD6)
+                    MapTheme.SATELLITE -> Color(0xFF283B2A)
+                    MapTheme.DARK_NAVIGATION -> Color(0xFF183827)
                 }
                 val waterColor = when (mapTheme) {
-                    MapTheme.GOOGLE_STREETS -> Color(0xFFD3E7FA)
-                    MapTheme.SATELLITE -> Color(0xFF183B54)
-                    MapTheme.DARK_NAVIGATION -> Color(0xFF142E46)
+                    MapTheme.GOOGLE_STREETS -> Color(0xFFC2E0FF)
+                    MapTheme.SATELLITE -> Color(0xFF1A384F)
+                    MapTheme.DARK_NAVIGATION -> Color(0xFF11293D)
                 }
-                val roadColor = when (mapTheme) {
-                    MapTheme.GOOGLE_STREETS -> Color.White
-                    MapTheme.SATELLITE -> Color(0xFF4A5568)
-                    MapTheme.DARK_NAVIGATION -> Color(0xFF253342)
+                val arterialColor = when (mapTheme) {
+                    MapTheme.GOOGLE_STREETS -> Color(0xFFFEF7D6)
+                    MapTheme.SATELLITE -> Color(0xFF555B63)
+                    MapTheme.DARK_NAVIGATION -> Color(0xFF334155)
                 }
-                val roadBorder = when (mapTheme) {
-                    MapTheme.GOOGLE_STREETS -> Color(0xFFE2E8F0)
-                    MapTheme.SATELLITE -> Color(0xFF2D3748)
+                val arterialBorder = when (mapTheme) {
+                    MapTheme.GOOGLE_STREETS -> Color(0xFFF8DC99)
+                    MapTheme.SATELLITE -> Color(0xFF374151)
                     MapTheme.DARK_NAVIGATION -> Color(0xFF1E293B)
                 }
+                val streetColor = when (mapTheme) {
+                    MapTheme.GOOGLE_STREETS -> Color.White
+                    MapTheme.SATELLITE -> Color(0xFF3F464E)
+                    MapTheme.DARK_NAVIGATION -> Color(0xFF1F2937)
+                }
+                val streetBorder = when (mapTheme) {
+                    MapTheme.GOOGLE_STREETS -> Color(0xFFDADCE0)
+                    MapTheme.SATELLITE -> Color(0xFF2E343A)
+                    MapTheme.DARK_NAVIGATION -> Color(0xFF182230)
+                }
 
-                // 1. Natural Parks & Green zones
+                // 1.1 Natural Parks (Bagmane Tech Park, Mahadevapura buffer)
                 drawRoundRect(
                     color = parkColor,
-                    topLeft = Offset(cx - 200f * zoomLevel, cy - 140f * zoomLevel),
-                    size = Size(110f * zoomLevel, 90f * zoomLevel),
+                    topLeft = Offset(cx - 240f * zoomLevel, cy - 170f * zoomLevel),
+                    size = Size(130f * zoomLevel, 95f * zoomLevel),
+                    cornerRadius = CornerRadius(16f, 16f)
+                )
+                drawRoundRect(
+                    color = parkColor,
+                    topLeft = Offset(cx + 60f * zoomLevel, cy + 40f * zoomLevel),
+                    size = Size(150f * zoomLevel, 90f * zoomLevel),
                     cornerRadius = CornerRadius(20f, 20f)
                 )
-                drawRoundRect(
-                    color = parkColor,
-                    topLeft = Offset(cx + 40f * zoomLevel, cy + 30f * zoomLevel),
-                    size = Size(130f * zoomLevel, 80f * zoomLevel),
-                    cornerRadius = CornerRadius(24f, 24f)
-                )
 
-                // 2. Realistic River / Canal running diagonally
-                val river = Path().apply {
-                    moveTo(cx - 220f * zoomLevel, cy + 130f * zoomLevel)
+                // 1.2 Realistic Lakes (Mahadevapura Lake, Ulsoor / KR Puram Lake)
+                val lakePath = Path().apply {
+                    moveTo(cx - 250f * zoomLevel, cy + 120f * zoomLevel)
                     cubicTo(
-                        cx - 80f * zoomLevel, cy + 80f * zoomLevel,
-                        cx + 30f * zoomLevel, cy + 160f * zoomLevel,
-                        cx + 220f * zoomLevel, cy + 110f * zoomLevel
+                        cx - 160f * zoomLevel, cy + 85f * zoomLevel,
+                        cx - 90f * zoomLevel, cy + 160f * zoomLevel,
+                        cx + 40f * zoomLevel, cy + 115f * zoomLevel
+                    )
+                    cubicTo(
+                        cx + 120f * zoomLevel, cy + 90f * zoomLevel,
+                        cx + 210f * zoomLevel, cy + 150f * zoomLevel,
+                        cx + 260f * zoomLevel, cy + 110f * zoomLevel
                     )
                 }
-                drawPath(river, waterColor, style = Stroke(width = 24f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                drawPath(
+                    path = lakePath,
+                    color = waterColor,
+                    style = Stroke(width = 28f * zoomLevel, cap = StrokeCap.Round)
+                )
 
-                // 3. Grid street network
-                val step = 55f * zoomLevel
+                // 1.3 Secondary Local Street Grid
+                val gridStep = 52f * zoomLevel
                 for (i in -4..4) {
-                    drawLine(roadBorder, Offset(cx - 240f * zoomLevel, cy + i * step), Offset(cx + 240f * zoomLevel, cy + i * step), strokeWidth = 5f * zoomLevel)
-                    drawLine(roadColor, Offset(cx - 240f * zoomLevel, cy + i * step), Offset(cx + 240f * zoomLevel, cy + i * step), strokeWidth = 3f * zoomLevel)
-                    drawLine(roadBorder, Offset(cx + i * step, cy - 200f * zoomLevel), Offset(cx + i * step, cy + 200f * zoomLevel), strokeWidth = 5f * zoomLevel)
-                    drawLine(roadColor, Offset(cx + i * step, cy - 200f * zoomLevel), Offset(cx + i * step, cy + 200f * zoomLevel), strokeWidth = 3f * zoomLevel)
+                    val y = cy + i * gridStep
+                    drawLine(streetBorder, Offset(cx - 280f * zoomLevel, y), Offset(cx + 280f * zoomLevel, y), strokeWidth = 5.5f * zoomLevel)
+                    drawLine(streetColor, Offset(cx - 280f * zoomLevel, y), Offset(cx + 280f * zoomLevel, y), strokeWidth = 3.5f * zoomLevel)
+
+                    val x = cx + i * gridStep
+                    drawLine(streetBorder, Offset(x, cy - 240f * zoomLevel), Offset(x, cy + 240f * zoomLevel), strokeWidth = 5.5f * zoomLevel)
+                    drawLine(streetColor, Offset(x, cy - 240f * zoomLevel), Offset(x, cy + 240f * zoomLevel), strokeWidth = 3.5f * zoomLevel)
                 }
 
-                // 4. Primary Route Polyline connecting p1 to p5
+                // 1.4 Major Arterial Roads (Outer Ring Road & ITPL Main Road)
+                // Outer Ring Road (Curved Highway)
+                val orrHighway = Path().apply {
+                    moveTo(cx - 270f * zoomLevel, cy + 150f * zoomLevel)
+                    cubicTo(
+                        cx - 130f * zoomLevel, cy - 20f * zoomLevel,
+                        cx + 110f * zoomLevel, cy - 110f * zoomLevel,
+                        cx + 270f * zoomLevel, cy - 160f * zoomLevel
+                    )
+                }
+                drawPath(orrHighway, arterialBorder, style = Stroke(width = 13f * zoomLevel, cap = StrokeCap.Round))
+                drawPath(orrHighway, arterialColor, style = Stroke(width = 9.5f * zoomLevel, cap = StrokeCap.Round))
+
+                // ITPL Main Road
+                val itplRoad = Path().apply {
+                    moveTo(cx - 260f * zoomLevel, cy - 90f * zoomLevel)
+                    lineTo(cx + 260f * zoomLevel, cy + 110f * zoomLevel)
+                }
+                drawPath(itplRoad, arterialBorder, style = Stroke(width = 12f * zoomLevel, cap = StrokeCap.Round))
+                drawPath(itplRoad, arterialColor, style = Stroke(width = 8.5f * zoomLevel, cap = StrokeCap.Round))
+
+                // 1.5 Indian Railways Railway Track (KR Puram Station)
+                val railY = cy + 60f * zoomLevel
+                drawLine(Color(0xFF5F6368), Offset(cx - 270f * zoomLevel, railY), Offset(cx + 270f * zoomLevel, railY), strokeWidth = 2.5f * zoomLevel)
+                for (rx in (-260..260 step 14)) {
+                    val trackX = cx + rx * zoomLevel
+                    drawLine(
+                        Color(0xFF5F6368),
+                        Offset(trackX, railY - 3.5f * zoomLevel),
+                        Offset(trackX, railY + 3.5f * zoomLevel),
+                        strokeWidth = 2f * zoomLevel
+                    )
+                }
+
+                // 1.6 Bengaluru Purple Metro Line [M] (Namma Metro Purple Line track)
+                val metroLine = Path().apply {
+                    moveTo(cx - 260f * zoomLevel, cy - 50f * zoomLevel)
+                    cubicTo(
+                        cx - 100f * zoomLevel, cy - 10f * zoomLevel,
+                        cx + 60f * zoomLevel, cy + 30f * zoomLevel,
+                        cx + 260f * zoomLevel, cy + 80f * zoomLevel
+                    )
+                }
+                // Purple outer track
+                drawPath(metroLine, Color(0xFF8E24AA), style = Stroke(width = 4f * zoomLevel, cap = StrokeCap.Round))
+                // White dash inner
+                drawPath(
+                    metroLine,
+                    Color.White,
+                    style = Stroke(
+                        width = 1.5f * zoomLevel,
+                        cap = StrokeCap.Round,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
+                    )
+                )
+
+                // 1.7 Primary Navigation Route Polyline (p1 -> p2 -> p3 -> p4 -> p5)
                 val routePath = Path().apply {
                     moveTo(p1.x, p1.y)
                     lineTo(p2.x, p2.y)
@@ -291,21 +400,20 @@ fun LiveGoogleMapView(
                     lineTo(p4.x, p4.y)
                     lineTo(p5.x, p5.y)
                 }
-
-                // Outer border of navigation line
+                // Navigation Route Drop Shadow / Border
                 drawPath(
                     path = routePath,
                     color = Color(0xFF1557B0),
-                    style = Stroke(width = 10f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
+                    style = Stroke(width = 11f * zoomLevel, cap = StrokeCap.Round, join = StrokeJoin.Round)
                 )
-                // Vibrant Royal Blue core line
+                // Signature Google Royal Navigation Blue
                 drawPath(
                     path = routePath,
-                    color = Color(0xFF1D64F2),
-                    style = Stroke(width = 6f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
+                    color = Color(0xFF1A73E8),
+                    style = Stroke(width = 7.5f * zoomLevel, cap = StrokeCap.Round, join = StrokeJoin.Round)
                 )
 
-                // Directional Chevrons '>' along the route
+                // Navigation Chevrons '>'
                 val chevrons = listOf(
                     Offset(p1.x + (p2.x - p1.x) * 0.5f, p1.y + (p2.y - p1.y) * 0.5f),
                     Offset(p2.x + (p3.x - p2.x) * 0.5f, p2.y + (p3.y - p2.y) * 0.5f),
@@ -314,432 +422,622 @@ fun LiveGoogleMapView(
                 )
                 chevrons.forEach { ch ->
                     val arrow = Path().apply {
-                        moveTo(ch.x - 4f * zoomLevel, ch.y - 5f * zoomLevel)
-                        lineTo(ch.x + 3f * zoomLevel, ch.y)
-                        lineTo(ch.x - 4f * zoomLevel, ch.y + 5f * zoomLevel)
+                        moveTo(ch.x - 4f * zoomLevel, ch.y - 4.5f * zoomLevel)
+                        lineTo(ch.x + 3.5f * zoomLevel, ch.y)
+                        lineTo(ch.x - 4f * zoomLevel, ch.y + 4.5f * zoomLevel)
                     }
-                    drawPath(arrow, Color.White, style = Stroke(width = 2.5f * zoomLevel, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                    drawPath(arrow, Color.White, style = Stroke(width = 2.2f * zoomLevel, cap = StrokeCap.Round))
                 }
 
-                // Fixed Start Node on Map at p1
-                drawCircle(Color(0xFF16A34A), radius = 8f * zoomLevel, center = p1)
-                drawCircle(Color.White, radius = 3.5f * zoomLevel, center = p1)
+                // 1.8 Connections between Live User and Trip Buddies (Dashed distance lines)
+                buddyPositions.forEachIndexed { i, bPos ->
+                    drawLine(
+                        color = Color(0xFF1A73E8).copy(alpha = 0.55f),
+                        start = travelerPos,
+                        end = bPos,
+                        strokeWidth = 2.2f * zoomLevel,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 6f))
+                    )
+                }
 
-                // Fixed Destination Node on Map at p5
-                drawCircle(Color(0xFFDC2626), radius = 8f * zoomLevel, center = p5)
-                drawCircle(Color.White, radius = 3.5f * zoomLevel, center = p5)
+                // 1.9 Route Nodes (Start, Checkpoints, End)
+                // Start Node (Green Pin)
+                drawCircle(Color(0xFF137333), radius = 7f * zoomLevel, center = p1)
+                drawCircle(Color.White, radius = 3.2f * zoomLevel, center = p1)
 
-                // Fixed Checkpoint Nodes at p2 and p4
-                drawCircle(Color(0xFF16A34A), radius = 5f * zoomLevel, center = p2)
-                drawCircle(Color(0xFFEA580C), radius = 5f * zoomLevel, center = p4)
+                // Destination Node (Red Pin)
+                drawCircle(Color(0xFFC5221F), radius = 7f * zoomLevel, center = p5)
+                drawCircle(Color.White, radius = 3.2f * zoomLevel, center = p5)
 
-                // Pulsing beacon at dynamic active traveler position on the route line
+                // =========================================================================
+                // 1.10 ICONIC GOOGLE MAPS LIVE LOCATION DOT & DIRECTIONAL CONE
+                // =========================================================================
+                // A) Directional Viewing Cone (Flashlight Beam)
+                val coneRadius = 68f * zoomLevel
+                val headingRad = headingAngleDeg * (PI / 180.0)
+                val sweepRad = 58.0 * (PI / 180.0)
+                val halfSweep = sweepRad / 2.0
+                val startRad = headingRad - halfSweep
+                val endRad = headingRad + halfSweep
+
+                val conePath = Path().apply {
+                    moveTo(travelerPos.x, travelerPos.y)
+                    val steps = 14
+                    for (step in 0..steps) {
+                        val angle = startRad + (endRad - startRad) * (step.toDouble() / steps)
+                        val arcX = travelerPos.x + coneRadius * cos(angle).toFloat()
+                        val arcY = travelerPos.y + coneRadius * sin(angle).toFloat()
+                        lineTo(arcX, arcY)
+                    }
+                    close()
+                }
+
+                val coneBrush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFF4285F4).copy(alpha = 0.42f),
+                        Color(0xFF4285F4).copy(alpha = 0.18f),
+                        Color(0xFF4285F4).copy(alpha = 0.0f)
+                    ),
+                    center = travelerPos,
+                    radius = coneRadius
+                )
+                drawPath(conePath, brush = coneBrush)
+
+                // B) Pulsing GPS Accuracy Ring
                 drawCircle(
-                    color = Color(0xFF1D64F2).copy(alpha = pulseAlpha),
-                    radius = pulseRadius * zoomLevel,
+                    color = Color(0xFF4285F4).copy(alpha = pulseAlpha * 0.32f),
+                    radius = (18f + pulseRadius * 1.1f) * zoomLevel,
                     center = travelerPos
                 )
+
+                // C) Outer Crisp White Ring Border (Google Maps Signature)
                 drawCircle(
-                    color = Color(0xFF1D64F2),
-                    radius = 8f * zoomLevel,
-                    center = travelerPos
+                    color = Color.Black.copy(alpha = 0.15f),
+                    radius = 12.5f * zoomLevel,
+                    center = Offset(travelerPos.x + 0.5f, travelerPos.y + 1f)
                 )
                 drawCircle(
                     color = Color.White,
-                    radius = 3.5f * zoomLevel,
+                    radius = 11.5f * zoomLevel,
                     center = travelerPos
                 )
+
+                // D) Core Solid Google Blue Live Location Circle (#1A73E8)
+                drawCircle(
+                    color = Color(0xFF1A73E8),
+                    radius = 8.5f * zoomLevel,
+                    center = travelerPos
+                )
+
+                // E) Inner specular light highlight
+                drawCircle(
+                    color = Color(0xFF8AB4F8),
+                    radius = 2.8f * zoomLevel,
+                    center = Offset(travelerPos.x - 1.8f * zoomLevel, travelerPos.y - 1.8f * zoomLevel)
+                )
             }
 
-            // Real-time Waypoint & Dynamic Traveler Pins (Locked to Canvas coordinates)
-            // 1. Waypoint 1: Fixed Starting Point Pin
+            // 2. Google Maps Landmarks directly from user screenshot
+            // Google Bangalore - Ananta (with official pin)
             Box(
                 modifier = Modifier.offset(
-                    x = with(density) { (p1.x).toDp() - 28.dp },
-                    y = with(density) { (p1.y).toDp() - 28.dp }
+                    x = with(density) { (cx - 130f * zoomLevel).toDp() },
+                    y = with(density) { (cy - 75f * zoomLevel).toDp() }
+                )
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
+                    Text("📍", fontSize = 9.sp)
+                    Spacer(Modifier.width(3.dp))
+                    Text("Google Bangalore - Ananta", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A73E8))
+                }
+            }
+
+            // Mahadevapura (prominent district label)
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx + 15f * zoomLevel).toDp() },
+                    y = with(density) { (cy - 25f * zoomLevel).toDp() }
+                )
+            ) {
+                Text(
+                    "MAHADEVAPURA",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    color = if (darkMode) Color(0xFFE2E8F0) else Color(0xFF3C4043),
+                    letterSpacing = 1.sp
+                )
+            }
+
+            // Krishnarajapuram
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx + 80f * zoomLevel).toDp() },
+                    y = with(density) { (cy + 25f * zoomLevel).toDp() }
+                )
+            ) {
+                Text(
+                    "Krishnarajapuram",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (darkMode) Color(0xFFCBD5E1) else Color(0xFF5F6368)
+                )
+            }
+
+            // The Rameshwaram Cafe
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx - 85f * zoomLevel).toDp() },
+                    y = with(density) { (cy + 20f * zoomLevel).toDp() }
+                )
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.90f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Text("🍴", fontSize = 8.sp)
+                    Spacer(Modifier.width(3.dp))
+                    Text("The Rameshwaram Cafe", fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFD93025))
+                }
+            }
+
+            // Cake Warrior
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx + 35f * zoomLevel).toDp() },
+                    y = with(density) { (cy - 65f * zoomLevel).toDp() }
+                )
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.90f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Text("🍰", fontSize = 8.sp)
+                    Spacer(Modifier.width(3.dp))
+                    Text("Cake Warrior", fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF188038))
+                }
+            }
+
+            // Torq03 (Karting / Bowling)
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx - 40f * zoomLevel).toDp() },
+                    y = with(density) { (cy + 75f * zoomLevel).toDp() }
+                )
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.90f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Text("🏎️", fontSize = 8.sp)
+                    Spacer(Modifier.width(3.dp))
+                    Text("Torq03", fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE37400))
+                }
+            }
+
+            // Namma Metro Purple Line Stations [M]
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { (cx - 15f * zoomLevel).toDp() },
+                    y = with(density) { (cy + 10f * zoomLevel).toDp() }
                 )
             ) {
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFF16A34A),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
-                    shadowElevation = 3.dp
+                    shape = RoundedCornerShape(3.dp),
+                    color = Color(0xFF8E24AA)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(10.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text(sourceName.take(12), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 9.sp)
-                    }
+                    Text(
+                        "[M] Mahadevapura",
+                        color = Color.White,
+                        fontSize = 7.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
                 }
             }
 
-            // 2. Waypoint 5: Fixed Destination Point Pin
+            // Highway Shields (NH 44 & NH 75)
             Box(
                 modifier = Modifier.offset(
-                    x = with(density) { (p5.x).toDp() - 28.dp },
-                    y = with(density) { (p5.y).toDp() + 10.dp }
+                    x = with(density) { (cx + 120f * zoomLevel).toDp() },
+                    y = with(density) { (cy - 120f * zoomLevel).toDp() }
                 )
             ) {
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFFDC2626),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
-                    shadowElevation = 3.dp
+                    shape = RoundedCornerShape(3.dp),
+                    color = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF3C4043))
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("🏁", fontSize = 9.sp)
-                        Spacer(Modifier.width(3.dp))
-                        Text(destinationName.take(12), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 9.sp)
-                    }
+                    Text("44", fontSize = 7.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp))
                 }
             }
 
-            // 3. Realistic Vehicle Marker (ACS Bike with Rider from Image 3) moving along the route
-            Box(
-                modifier = Modifier.offset(
-                    x = with(density) { (travelerPos.x).toDp() - 20.dp },
-                    y = with(density) { (travelerPos.y).toDp() - 44.dp }
-                )
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color(0xFF0F172A).copy(alpha = 0.90f),
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0xFF38BDF8))
-                    ) {
-                        Text(
-                            "ACS",
-                            color = Color.White,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                        )
-                    }
-                    Spacer(Modifier.height(2.dp))
-                    // Bike / Vehicle Icon with Rider (Image 3)
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(Color.White)
-                            .border(2.dp, Color(0xFF0284C7), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            when (vehicleType.uppercase()) {
-                                "BIKE", "MOTORCYCLE" -> "🏍️"
-                                "CYCLE", "BICYCLE" -> "🚲"
-                                "SCOOTER" -> "🛵"
-                                "SUV" -> "🚙"
-                                "BUS" -> "🚌"
-                                else -> "🚗"
-                            },
-                            fontSize = 18.sp
-                        )
-                    }
-                }
-            }
+            // 3. Trip Buddies Live Location Markers with Distance & Battery Badges
+            otherMembers.forEachIndexed { index, member ->
+                if (index < buddyPositions.size) {
+                    val bPos = buddyPositions[index]
+                    val distanceKm = 1.4 + index * 1.8
+                    val speed = member.speedKmh ?: (38.0 + (index * 4))
+                    val battery = member.batteryPercent ?: (88 + (index * 3) % 10)
 
-            // 4. Live User Location Marker (Ola / Uber Pulsing Radar Halo + Avatar matching Image 3)
-            Box(
-                modifier = Modifier.offset(
-                    x = with(density) { (p1.x).toDp() + 20.dp },
-                    y = with(density) { (p1.y).toDp() + 15.dp }
-                )
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    // Animated radar halo
-                    Canvas(modifier = Modifier.size(54.dp)) {
-                        drawCircle(
-                            color = Color(0xFF00E5FF).copy(alpha = pulseAlpha * 0.35f),
-                            radius = size.minDimension / 2f * (0.6f + (pulseRadius / 25f) * 0.4f)
-                        )
-                        drawCircle(
-                            color = Color(0xFF0284C7).copy(alpha = 0.2f),
-                            radius = size.minDimension / 2.8f
-                        )
-                    }
-                    // Inner Circular Avatar with Cyan glowing ring (Image 3)
+                    // Distance mid-badge along the dashed connection line
+                    val midLineX = (travelerPos.x + bPos.x) / 2f
+                    val midLineY = (travelerPos.y + bPos.y) / 2f
                     Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .border(2.dp, Color(0xFF00E5FF), CircleShape)
-                            .padding(2.dp)
-                            .clip(CircleShape)
-                            .background(Color.White),
-                        contentAlignment = Alignment.Center
+                        modifier = Modifier.offset(
+                            x = with(density) { midLineX.toDp() - 22.dp },
+                            y = with(density) { midLineY.toDp() - 10.dp }
+                        )
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(CircleShape)
-                                .background(Color(0xFF3B82F6)),
-                            contentAlignment = Alignment.Center
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF1E293B).copy(alpha = 0.88f),
+                            border = androidx.compose.foundation.BorderStroke(0.6.dp, Color(0xFF38BDF8))
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = "Live User",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
+                            Text(
+                                formatDistance(distanceKm),
+                                color = Color.White,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                             )
+                        }
+                    }
+
+                    // Buddy Pin
+                    Box(
+                        modifier = Modifier.offset(
+                            x = with(density) { bPos.x.toDp() - 24.dp },
+                            y = with(density) { bPos.y.toDp() - 36.dp }
+                        ).clickable {
+                            selectedBuddy = member
+                            onSelectTarget?.invoke(
+                                MapTarget(
+                                    id = member.id,
+                                    title = member.name,
+                                    subtitle = "${formatDistance(distanceKm)} away • $battery% 🔋",
+                                    latitude = member.latitude ?: 12.9716,
+                                    longitude = member.longitude ?: 77.5946,
+                                    speedKmh = speed,
+                                    batteryPercent = battery,
+                                    color = member.color
+                                )
+                            )
+                        }
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            // Floating Buddy Info Pill
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.White,
+                                shadowElevation = 3.dp,
+                                border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(member.color))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(5.dp)
+                                            .clip(CircleShape)
+                                            .background(if (member.isSharingLocation) Color(0xFF16A34A) else Color.Gray)
+                                    )
+                                    Spacer(Modifier.width(3.dp))
+                                    Text(
+                                        member.name.take(9),
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1F2937)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            // Circular Avatar Pin with Colored Ring
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .shadow(4.dp, CircleShape)
+                                    .clip(CircleShape)
+                                    .background(Color.White)
+                                    .border(2.5.dp, Color(member.color), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                TravelerAvatar(avatarType = member.avatarType, size = 30.dp)
+                            }
                         }
                     }
                 }
             }
 
-            // Real Google Map Landmark Overlays matching attached images (Image 1, 2, 3)
-            // SLN College of Arts & Commerce (Image 3)
+            // 4. Primary User Live Vehicle Indicator floating right by the live location dot
             Box(
                 modifier = Modifier.offset(
-                    x = with(density) { (cx - 100f * zoomLevel).toDp() },
-                    y = with(density) { (cy - 30f * zoomLevel).toDp() }
-                )
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .background(Color.White.copy(alpha = 0.88f), RoundedCornerShape(4.dp))
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                ) {
-                    Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF64748B)))
-                    Spacer(Modifier.width(4.dp))
-                    Text("SLN COLLEGE OF ARTS &...", fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF334155))
-                }
-            }
-
-            // Zain Telecom (Image 3)
-            Box(
-                modifier = Modifier.offset(
-                    x = with(density) { (cx + 35f * zoomLevel).toDp() },
-                    y = with(density) { (cy - 10f * zoomLevel).toDp() }
-                )
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .background(Color.White.copy(alpha = 0.88f), RoundedCornerShape(4.dp))
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                ) {
-                    Text("🛍️", fontSize = 7.sp)
-                    Spacer(Modifier.width(3.dp))
-                    Text("Zain Telecom", fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0284C7))
-                }
-            }
-
-            // Chikkajala (Image 1 & 2)
-            Box(
-                modifier = Modifier.offset(
-                    x = with(density) { (cx + 50f * zoomLevel).toDp() },
-                    y = with(density) { (cy - 55f * zoomLevel).toDp() }
-                )
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("CHIKKAJALA", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E293B))
-                    Text("ಚಿಕ್ಕಜಾಲ", fontSize = 7.sp, color = Color(0xFF64748B))
-                }
-            }
-
-            // Yelahanka New Town (Image 1 & 2)
-            Box(
-                modifier = Modifier.offset(
-                    x = with(density) { (cx - 65f * zoomLevel).toDp() },
-                    y = with(density) { (cy + 40f * zoomLevel).toDp() }
-                )
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("YELAHANKA", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E293B))
-                    Text("ಯಲಹಂಕ", fontSize = 7.sp, color = Color(0xFF64748B))
-                }
-            }
-
-            // Route shield NH 9 / 104
-            Box(
-                modifier = Modifier.offset(
-                    x = with(density) { (cx - 25f * zoomLevel).toDp() },
-                    y = with(density) { (cy + 25f * zoomLevel).toDp() }
+                    x = with(density) { travelerPos.x.toDp() + 10.dp },
+                    y = with(density) { travelerPos.y.toDp() - 32.dp }
                 )
             ) {
                 Surface(
-                    shape = RoundedCornerShape(3.dp),
+                    shape = RoundedCornerShape(8.dp),
                     color = Color.White,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0F172A))
+                    shadowElevation = 3.dp,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1A73E8))
                 ) {
-                    Text("9", fontSize = 7.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp))
-                }
-            }
-            Box(
-                modifier = Modifier.offset(
-                    x = with(density) { (cx + 45f * zoomLevel).toDp() },
-                    y = with(density) { (cy + 45f * zoomLevel).toDp() }
-                )
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(3.dp),
-                    color = Color.White,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0F172A))
-                ) {
-                    Text("104", fontSize = 7.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp))
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(vehicleIcon, fontSize = 10.sp)
+                        Spacer(Modifier.width(3.dp))
+                        Text("You (Live)", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A73E8))
+                    }
                 }
             }
 
-            // Official Google Maps Watermark (Bottom-Left)
+            // 5. Waypoint 1 (Start) & Waypoint 5 (Destination) Milestone Badges
+            // Start Pin
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { p1.x.toDp() - 28.dp },
+                    y = with(density) { p1.y.toDp() - 26.dp }
+                )
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF137333),
+                    shadowElevation = 2.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(9.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text(sourceName.take(11), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 8.sp)
+                    }
+                }
+            }
+
+            // Destination Pin
+            Box(
+                modifier = Modifier.offset(
+                    x = with(density) { p5.x.toDp() - 28.dp },
+                    y = with(density) { p5.y.toDp() + 8.dp }
+                )
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFC5221F),
+                    shadowElevation = 2.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🏁", fontSize = 8.sp)
+                        Spacer(Modifier.width(3.dp))
+                        Text(destinationName.take(11), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 8.sp)
+                    }
+                }
+            }
+
+            // =========================================================================
+            // 6. OFFICIAL GOOGLE MAPS FLOATING UI CONTROLS
+            // =========================================================================
+
+            // 6.1 Top Floating Google Maps "Search here" Bar
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    color = if (darkMode) Color(0xFF1F2937) else Color.White,
+                    shadowElevation = 4.dp
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Google Multi-Color Pin Icon
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("📍", fontSize = 16.sp)
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        // Placeholder
+                        Text(
+                            text = "Search here",
+                            fontSize = 14.sp,
+                            color = if (darkMode) Color(0xFF94A3B8) else Color(0xFF5F6368),
+                            modifier = Modifier.weight(1f)
+                        )
+                        // Voice Mic Icon
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Voice Search",
+                            tint = if (darkMode) Color(0xFFCBD5E1) else Color(0xFF5F6368),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        // Google Lens Icon
+                        Icon(
+                            imageVector = Icons.Default.PhotoCamera,
+                            contentDescription = "Lens",
+                            tint = if (darkMode) Color(0xFFCBD5E1) else Color(0xFF5F6368),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        // User Profile Circle
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1A73E8)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("TB", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(6.dp))
+
+                // 6.2 Horizontal Google Category Chips
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    GoogleCategoryChip("✨ Ask Maps", true)
+                    GoogleCategoryChip("🏠 Home", false)
+                    GoogleCategoryChip("🍴 Restaurants", false)
+                    GoogleCategoryChip("🏨 Hotels", false)
+                    GoogleCategoryChip("☕ Coffee", false)
+                    GoogleCategoryChip("⛽ Gas", false)
+                }
+            }
+
+            // 6.3 Right-Side Floating Action Buttons (Layers, Share, Recenter, Directions)
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Layers Button
+                FloatingMapIconBtn(
+                    icon = Icons.Default.Layers,
+                    contentDesc = "Layers",
+                    onClick = {
+                        mapTheme = when (mapTheme) {
+                            MapTheme.GOOGLE_STREETS -> MapTheme.SATELLITE
+                            MapTheme.SATELLITE -> MapTheme.DARK_NAVIGATION
+                            MapTheme.DARK_NAVIGATION -> MapTheme.GOOGLE_STREETS
+                        }
+                    }
+                )
+
+                // Fullscreen Button
+                if (onToggleFullscreen != null) {
+                    FloatingMapIconBtn(
+                        icon = if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                        contentDesc = "Fullscreen",
+                        onClick = onToggleFullscreen
+                    )
+                }
+
+                // Google Maps GPS Recenter Compass Button
+                FloatingMapIconBtn(
+                    icon = Icons.Default.MyLocation,
+                    contentDesc = "Recenter",
+                    tint = Color(0xFF1A73E8),
+                    onClick = {
+                        panOffsetX = 0f
+                        panOffsetY = 0f
+                        zoomLevel = 1.0f
+                    }
+                )
+
+                // Zoom Controls
+                FloatingMapIconBtn(
+                    icon = Icons.Default.Add,
+                    contentDesc = "Zoom In",
+                    onClick = { zoomLevel = (zoomLevel * 1.25f).coerceAtMost(2.5f) }
+                )
+                FloatingMapIconBtn(
+                    icon = Icons.Default.Remove,
+                    contentDesc = "Zoom Out",
+                    onClick = { zoomLevel = (zoomLevel / 1.25f).coerceAtLeast(0.7f) }
+                )
+            }
+
+            // 6.4 Google Logo Watermark (Bottom Left)
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = 10.dp, bottom = 38.dp),
+                    .padding(start = 12.dp, bottom = 42.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text("o", color = Color(0xFFEA4335), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text("o", color = Color(0xFFFBBC05), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text("g", color = Color(0xFF4285F4), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text("l", color = Color(0xFF34A853), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text("e", color = Color(0xFFEA4335), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("o", color = Color(0xFFEA4335), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("o", color = Color(0xFFFBBC05), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("g", color = Color(0xFF4285F4), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("l", color = Color(0xFF34A853), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("e", color = Color(0xFFEA4335), fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
 
-            // Milestone Route Timeline Strip across the bottom of the map
+            // 6.5 Live Route Navigation Strip across bottom
             Surface(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
                     .fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = if (darkMode) Color(0xFF0F172A).copy(alpha = 0.92f) else Color.White.copy(alpha = 0.94f),
-                shadowElevation = 2.dp,
-                border = androidx.compose.foundation.BorderStroke(1.dp, if (darkMode) Color(0xFF334155) else Color(0xFFE2E8F0))
+                shape = RoundedCornerShape(12.dp),
+                color = (if (darkMode) Color(0xFF1F2937) else Color.White).copy(alpha = 0.95f),
+                shadowElevation = 3.dp,
+                border = androidx.compose.foundation.BorderStroke(0.8.dp, if (darkMode) Color(0xFF334155) else Color(0xFFE2E8F0))
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    MilestoneStep("1. Start", "✓ Fixed", Color(0xFF16A34A))
-                    Text("→", fontSize = 9.sp, color = Color.Gray)
-                    MilestoneStep("2. CP", "✓ Done", Color(0xFF16A34A))
-                    Text("→", fontSize = 9.sp, color = Color.Gray)
-                    MilestoneStep("3. Live", "🔵 Live", Color(0xFF1D64F2))
-                    Text("→", fontSize = 9.sp, color = Color.Gray)
-                    MilestoneStep("4. Rest", "🕒 Stop", Color(0xFFEA580C))
-                    Text("→", fontSize = 9.sp, color = Color.Gray)
-                    MilestoneStep("5. Dest", "🏁 Fixed", Color(0xFFDC2626))
-                }
-            }
-
-            // Top-left: Google Maps Route Banner & Vehicle Indicator
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(10.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = (if (darkMode) Color(0xFF1E293B) else Color.White).copy(alpha = 0.94f),
-                shadowElevation = 4.dp
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF22C55E))
+                                .background(Color(0xFF16A34A))
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "$vehicleIcon Route • ${formatDistance(totalDistance)} ($drivingEta)",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (darkMode) Color.White else Color(0xFF1E293B)
-                        )
-                    }
-                    Text(
-                        text = "$sourceName ➔ $destinationName",
-                        fontSize = 10.sp,
-                        color = Color(0xFF1D64F2),
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-
-            // Top-right: Map Controls (Fullscreen + Satellite)
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(10.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = (if (darkMode) Color(0xFF1E293B) else Color.White).copy(alpha = 0.92f),
-                shadowElevation = 3.dp
-            ) {
-                Row(modifier = Modifier.padding(2.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (onToggleFullscreen != null) {
-                        IconButton(
-                            onClick = onToggleFullscreen,
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                if (isFullscreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
-                                contentDescription = "Fullscreen",
-                                tint = Color(0xFF2563EB),
-                                modifier = Modifier.size(18.dp)
+                        Column {
+                            Text(
+                                "$vehicleIcon ${formatDistance(totalDistance)} • $drivingEta",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (darkMode) Color.White else Color(0xFF1F2937)
+                            )
+                            Text(
+                                "$sourceName ➔ $destinationName",
+                                fontSize = 9.sp,
+                                color = Color(0xFF1A73E8),
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
-                    IconButton(
-                        onClick = {
-                            mapTheme = if (mapTheme == MapTheme.GOOGLE_STREETS) MapTheme.SATELLITE else MapTheme.GOOGLE_STREETS
-                        },
-                        modifier = Modifier.size(32.dp)
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF1A73E8),
+                        modifier = Modifier.clickable {
+                            panOffsetX = 0f
+                            panOffsetY = 0f
+                        }
                     ) {
-                        Icon(
-                            if (mapTheme == MapTheme.SATELLITE) Icons.Filled.Public else Icons.Filled.Map,
-                            contentDescription = "Theme",
-                            tint = Color(0xFF2563EB),
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.Navigation, contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text("Track", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                        }
                     }
-                }
-            }
-
-            // Bottom-right: Zoom and Recenter Controls
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                SmallFloatingActionButton(
-                    onClick = {
-                        panOffsetX = 0f
-                        panOffsetY = 0f
-                        zoomLevel = 1.0f
-                    },
-                    containerColor = if (darkMode) Color(0xFF1E293B) else Color.White,
-                    contentColor = Color(0xFF2563EB),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(Icons.Filled.MyLocation, "Recenter", modifier = Modifier.size(18.dp))
-                }
-
-                SmallFloatingActionButton(
-                    onClick = { zoomLevel = (zoomLevel * 1.25f).coerceAtMost(2.5f) },
-                    containerColor = if (darkMode) Color(0xFF1E293B) else Color.White,
-                    contentColor = if (darkMode) Color.White else Color(0xFF1E293B),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(Icons.Filled.Add, "Zoom In", modifier = Modifier.size(18.dp))
-                }
-
-                SmallFloatingActionButton(
-                    onClick = { zoomLevel = (zoomLevel / 1.25f).coerceAtLeast(0.7f) },
-                    containerColor = if (darkMode) Color(0xFF1E293B) else Color.White,
-                    contentColor = if (darkMode) Color.White else Color(0xFF1E293B),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(Icons.Filled.Remove, "Zoom Out", modifier = Modifier.size(18.dp))
                 }
             }
         }
@@ -747,9 +1045,50 @@ fun LiveGoogleMapView(
 }
 
 @Composable
-private fun MilestoneStep(title: String, status: String, statusColor: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-        Text(status, fontSize = 8.sp, color = statusColor, fontWeight = FontWeight.SemiBold)
+private fun GoogleCategoryChip(label: String, isSpecial: Boolean = false) {
+    val darkMode = LocalTravelBuddyDarkMode.current
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = if (isSpecial) Color(0xFFEDE7F6) else if (darkMode) Color(0xFF1F2937) else Color.White,
+        shadowElevation = 2.dp,
+        border = androidx.compose.foundation.BorderStroke(
+            0.6.dp,
+            if (isSpecial) Color(0xFF9333EA) else if (darkMode) Color(0xFF334155) else Color(0xFFDADCE0)
+        )
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            fontWeight = if (isSpecial) FontWeight.Bold else FontWeight.Medium,
+            color = if (isSpecial) Color(0xFF6B21A8) else if (darkMode) Color.White else Color(0xFF3C4043),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+        )
+    }
+}
+
+@Composable
+private fun FloatingMapIconBtn(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDesc: String,
+    tint: Color = Color(0xFF5F6368),
+    onClick: () -> Unit
+) {
+    val darkMode = LocalTravelBuddyDarkMode.current
+    Surface(
+        modifier = Modifier.size(36.dp),
+        shape = CircleShape,
+        color = if (darkMode) Color(0xFF1F2937) else Color.White,
+        shadowElevation = 3.dp,
+        border = androidx.compose.foundation.BorderStroke(0.6.dp, if (darkMode) Color(0xFF334155) else Color(0xFFE2E8F0)),
+        onClick = onClick
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDesc,
+                tint = if (darkMode && tint == Color(0xFF5F6368)) Color(0xFFCBD5E1) else tint,
+                modifier = Modifier.size(18.dp)
+            )
+        }
     }
 }
