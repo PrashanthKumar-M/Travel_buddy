@@ -376,8 +376,8 @@ actual object PlatformLocation {
                     null
                 }
             }
-            // If on main thread, do not block long (max 1000ms), background callers can wait up to 2500ms
-            val timeout = if (Looper.myLooper() == Looper.getMainLooper()) 1000L else 2500L
+            // If on main thread, do not block the UI (max 100ms), background callers can wait up to 2500ms
+            val timeout = if (Looper.myLooper() == Looper.getMainLooper()) 100L else 2500L
             future.get(timeout, TimeUnit.MILLISECONDS)
         } catch (_: Exception) {
             null
@@ -413,7 +413,7 @@ actual object PlatformLocation {
                     emptyList()
                 }
             }
-            val timeout = if (Looper.myLooper() == Looper.getMainLooper()) 1200L else 3000L
+            val timeout = if (Looper.myLooper() == Looper.getMainLooper()) 100L else 3000L
             future.get(timeout, TimeUnit.MILLISECONDS)
         } catch (_: Exception) {
             emptyList()

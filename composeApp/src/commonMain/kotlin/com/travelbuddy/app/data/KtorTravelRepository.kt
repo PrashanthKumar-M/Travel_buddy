@@ -6,6 +6,7 @@ import com.travelbuddy.app.domain.Trip
 import com.travelbuddy.app.domain.TripMember
 import com.travelbuddy.app.domain.TripStatus
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.request.delete
@@ -209,6 +210,11 @@ class KtorTravelRepository(
 }
 
 fun defaultHttpClient(): HttpClient = HttpClient {
+    install(HttpTimeout) {
+        requestTimeoutMillis = 6_000
+        connectTimeoutMillis = 4_000
+        socketTimeoutMillis = 6_000
+    }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
     install(WebSockets) { pingIntervalMillis = 20_000 }
 }

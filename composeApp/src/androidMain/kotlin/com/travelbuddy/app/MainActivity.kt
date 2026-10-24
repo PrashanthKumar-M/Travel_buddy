@@ -31,8 +31,6 @@ class MainActivity : ComponentActivity() {
         }
         if (permissions.isNotEmpty()) {
             requestPermissions(permissions.toTypedArray(), 101)
-        } else {
-            PlatformLocation.startContinuousTracking()
         }
 
         setContent {
@@ -50,8 +48,6 @@ class MainActivity : ComponentActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 101) {
-            // Re-query GPS once permissions granted
-            PlatformLocation.init(applicationContext)
             PlatformLocation.startContinuousTracking()
         }
     }

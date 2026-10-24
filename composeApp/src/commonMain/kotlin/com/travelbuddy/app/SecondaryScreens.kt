@@ -120,10 +120,13 @@ internal fun SettlementScreen(
     val transfers = if (apiSettlements.isNotEmpty()) apiSettlements else ExpenseCalculator.settlements(balances)
     fun nameOf(id: String) = members.firstOrNull { it.id == id }?.name ?: id
 
+    val settlementListState = androidx.compose.foundation.lazy.rememberLazyListState()
+
     Column(Modifier.fillMaxSize()) {
         ScreenHeader("Settlement", onClose)
         LazyColumn(
-            Modifier.fillMaxSize(),
+            state = settlementListState,
+            modifier = Modifier.fillMaxSize().verticalScrollbar(settlementListState),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -225,6 +228,7 @@ internal fun ProfileScreen(
             .fillMaxSize()
             .background(if (darkMode) Color(0xFF10151C) else Tb.Page)
             .verticalScroll(scrollState)
+            .verticalScrollbar(scrollState)
     ) {
         // Compact header bar (without extra statusBarsPadding so content fits on screen)
         Surface(
@@ -731,7 +735,7 @@ internal fun LocalChatScreen(
         } else {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier.weight(1f).fillMaxWidth().verticalScrollbar(listState),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {

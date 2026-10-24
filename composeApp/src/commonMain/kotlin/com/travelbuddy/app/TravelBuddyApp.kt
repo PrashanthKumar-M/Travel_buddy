@@ -199,13 +199,20 @@ internal fun TravelBuddyMain(
     val starterMembers = remember(currentUserName, currentUserId) {
         listOf(TripMember(currentUserId, currentUserName, 0xFF1D64F2L, true))
     }
+    // Instant local cache latch: opens immediately with zero waiting/lag
+    val initialCachedTrips = remember { TripStorage.loadCachedTrips() }
+    val initialActiveTripId = remember { TripStorage.getActiveTripId() }
+    var trips by remember {
+        mutableStateOf(initialCachedTrips)
+    }
     var activeTrip by remember {
-        mutableStateOf<Trip?>(null)
+        mutableStateOf<Trip?>(
+            initialCachedTrips.firstOrNull { it.id == initialActiveTripId } ?: initialCachedTrips.firstOrNull()
+        )
     }
     var apiMessage by remember { mutableStateOf("") }
-    var activeTripCover by remember { mutableStateOf<String?>(null) }
+    var activeTripCover by remember { mutableStateOf<String?>(activeTrip?.coverImage) }
     var tripCovers by remember { mutableStateOf(emptyMap<String, String>()) }
-    var trips by remember { mutableStateOf<List<Trip>>(emptyList()) }
     var settlements by remember { mutableStateOf(emptyList<com.travelbuddy.app.domain.Settlement>()) }
     var liveLocationCount by remember { mutableStateOf(0) }
 
@@ -219,7 +226,11 @@ internal fun TravelBuddyMain(
         mutableStateOf(EmergencyContactStorage.loadContacts())
     }
 
-    var members by remember { mutableStateOf(starterMembers) }
+    var members by remember {
+        mutableStateOf(
+            activeTrip?.let { deduplicateTripMembers(it.members, currentUserName, it.createdBy) } ?: starterMembers
+        )
+    }
 
     var expenses by remember {
         mutableStateOf<List<Expense>>(emptyList())
@@ -240,11 +251,16 @@ internal fun TravelBuddyMain(
             }
             if (validTrips.isNotEmpty()) {
                 trips = validTrips
-                activeTrip = validTrips.first()
-                members = deduplicateTripMembers(activeTrip!!.members, currentUserName, activeTrip!!.createdBy)
-                activeTripCover = activeTrip!!.coverImage
-                apiMessage = "Connected to backend • ${trips.size} trips synced"
-            } else {
+                TripStorage.saveCachedTrips(validTrips)
+                val curr = activeTrip
+                val matched = if (curr != null) validTrips.firstOrNull { it.id == curr.id || it.tripCode == curr.tripCode } else null
+                val target = matched ?: validTrips.first()
+                activeTrip = target
+                TripStorage.saveActiveTripId(target.id)
+                members = deduplicateTripMembers(target.members, currentUserName, target.createdBy)
+                activeTripCover = target.coverImage
+                apiMessage = "Connected • ${validTrips.size} trips synced"
+            } else if (initialCachedTrips.isEmpty()) {
                 trips = emptyList()
                 activeTrip = null
             }
@@ -428,6 +444,7 @@ internal fun TravelBuddyMain(
                             onPickTripCoverImage = onPickTripCoverImage,
                             onSelect = { trip ->
                                 activeTrip = trip
+                                TripStorage.saveActiveTripId(trip.id)
                                 activeTripCover = trip.coverImage ?: tripCovers[trip.id]
                                 members = deduplicateTripMembers(trip.members, currentUserName, trip.createdBy)
                                 apiMessage = "Switched to '${trip.name}' • Live tracking active"
@@ -441,9 +458,11 @@ internal fun TravelBuddyMain(
                                 }
                                 val remaining = trips.filterNot { it.id == trip.id || it.tripCode == trip.tripCode }
                                 trips = remaining
+                                TripStorage.saveCachedTrips(remaining)
                                 if (trip.id == activeTrip?.id) {
                                     if (remaining.isNotEmpty()) {
                                         activeTrip = remaining.first()
+                                        TripStorage.saveActiveTripId(remaining.first().id)
                                         members = deduplicateTripMembers(activeTrip!!.members, currentUserName, activeTrip!!.createdBy)
                                     } else {
                                         activeTrip = null
@@ -479,6 +498,8 @@ internal fun TravelBuddyMain(
                                     )
                                     activeTrip = localTrip
                                     trips = trips + localTrip
+                                    TripStorage.saveCachedTrips(trips)
+                                    TripStorage.saveActiveTripId(localTrip.id)
                                     members = tripMembers
                                     expenses = emptyList()
                                     settlements = emptyList()
@@ -519,6 +540,8 @@ internal fun TravelBuddyMain(
                                             )
                                             activeTrip = finalTrip
                                             trips = trips + finalTrip
+                                            TripStorage.saveCachedTrips(trips)
+                                            TripStorage.saveActiveTripId(finalTrip.id)
                                             members = finalTrip.members
                                             activeTripCover = draft.coverImage ?: trip.coverImage
                                             draft.coverImage?.let { tripCovers = tripCovers + (trip.id to it) }
@@ -555,6 +578,8 @@ internal fun TravelBuddyMain(
                                             val clean = deduplicateTripMembers(joinedTrip.members, myName, joinedTrip.createdBy)
                                             val synced = joinedTrip.copy(members = clean)
                                             trips = trips.filterNot { it.id == synced.id } + synced
+                                            TripStorage.saveCachedTrips(trips)
+                                            TripStorage.saveActiveTripId(synced.id)
                                             activeTrip = synced
                                             members = clean
                                             selectedTab = AppTab.Track
@@ -583,6 +608,8 @@ internal fun TravelBuddyMain(
                                                     val clean = deduplicateTripMembers(updatedMembers, myName, matched.createdBy)
                                                     val finalTrip = matched.copy(members = clean)
                                                     trips = trips.filterNot { it.id == finalTrip.id } + finalTrip
+                                                    TripStorage.saveCachedTrips(trips)
+                                                    TripStorage.saveActiveTripId(finalTrip.id)
                                                     activeTrip = finalTrip
                                                     members = clean
                                                     selectedTab = AppTab.Track
@@ -942,8 +969,10 @@ private fun HomeScreen(
     navigate: (AppTab) -> Unit,
     openFriendsAndFamily: () -> Unit
 ) {
+    val homeListState = rememberLazyListState()
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        state = homeListState,
+        modifier = Modifier.fillMaxSize().verticalScrollbar(homeListState),
         contentPadding = PaddingValues(
             start = 12.dp,
             end = 12.dp,
@@ -989,6 +1018,25 @@ private fun HomeScreen(
                         }
                     }
                 }
+            }
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Quick Actions",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = tbTextColor()
+                )
+                ScrollIndicatorHint(
+                    text = "Scroll for more",
+                    darkMode = LocalTravelBuddyDarkMode.current
+                )
             }
         }
 
@@ -1560,7 +1608,7 @@ private fun TripsScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().verticalScrollbar(listState),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 110.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -2218,13 +2266,25 @@ private fun CreateTripDialog(
     var destSuggestions by remember { mutableStateOf<List<PlaceSuggestion>>(emptyList()) }
     var sourceSuggestions by remember { mutableStateOf<List<PlaceSuggestion>>(emptyList()) }
 
+    val dialogListState = rememberLazyListState()
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Create Real-Time Trip") },
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Create Real-Time Trip")
+                ScrollIndicatorHint(text = "Scroll form", darkMode = false)
+            }
+        },
         text = {
             LazyColumn(
+                state = dialogListState,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.height(480.dp)
+                modifier = Modifier.height(480.dp).verticalScrollbar(dialogListState)
             ) {
                 item {
                     Surface(
@@ -3056,6 +3116,10 @@ private fun TrackingScreen(
     var engineLocked by remember { mutableStateOf(false) }
     var tagAlertTriggered by remember { mutableStateOf(false) }
 
+    val trackLiveUsersState = rememberLazyListState()
+    val trackVehicleState = rememberLazyListState()
+    val trackTagState = rememberLazyListState()
+
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
         // Top 3-Way Sub-Tabs
@@ -3088,7 +3152,8 @@ private fun TrackingScreen(
             0 -> {
                 // FEATURE 1: LIVE USERS TRACKING (REAL-TIME GOOGLE MAP & DISTANCE MATRIX)
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    state = trackLiveUsersState,
+                    modifier = Modifier.fillMaxSize().verticalScrollbar(trackLiveUsersState),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -3408,7 +3473,8 @@ private fun TrackingScreen(
             1 -> {
                 // FEATURE 2: VEHICLE GPS TRACKING & HARDWARE TELEMETRY
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    state = trackVehicleState,
+                    modifier = Modifier.fillMaxSize().verticalScrollbar(trackVehicleState),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -3540,7 +3606,8 @@ private fun TrackingScreen(
             2 -> {
                 // FEATURE 3: CHILD SCHOOL BAG & PERSONAL ASSET DEVICE TRACKING
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    state = trackTagState,
+                    modifier = Modifier.fillMaxSize().verticalScrollbar(trackTagState),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -4577,9 +4644,11 @@ private fun ExpensesScreen(
     val balances = ExpenseCalculator.balances(currentGroupMembers, currentExpenses)
     val rawSettlements = if (settlements.isEmpty() || splitMode == 1) ExpenseCalculator.settlements(balances) else settlements
     val activeSettlements = rawSettlements.filterNot { "${it.from}-${it.to}" in settledList }
+    val expensesScrollState = rememberLazyListState()
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        state = expensesScrollState,
+        modifier = Modifier.fillMaxSize().verticalScrollbar(expensesScrollState),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -5178,20 +5247,18 @@ private fun MoreScreen(
     onOpenTelemetry: () -> Unit,
     onLogout: () -> Unit
 ) {
+    val moreScrollState = rememberLazyListState()
 
     LazyColumn(
-
-        modifier = Modifier.fillMaxSize(),
-
+        state = moreScrollState,
+        modifier = Modifier.fillMaxSize().verticalScrollbar(moreScrollState),
         contentPadding = PaddingValues(
             start = 16.dp,
             end = 16.dp,
             top = 18.dp,
             bottom = 24.dp
         ),
-
-        verticalArrangement =
-            Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
 
         item {
@@ -5449,9 +5516,11 @@ private fun EmergencyContactsDialog(
                 if (localContacts.isEmpty()) {
                     Text("No emergency contacts added yet. Tap below to add family, friends or co-riders.", color = Color.Gray, fontSize = 13.sp)
                 } else {
+                    val contactsListState = rememberLazyListState()
                     LazyColumn(
+                        state = contactsListState,
                         verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.height(300.dp)
+                        modifier = Modifier.height(300.dp).verticalScrollbar(contactsListState)
                     ) {
                         items(localContacts) { contact ->
                             Card(

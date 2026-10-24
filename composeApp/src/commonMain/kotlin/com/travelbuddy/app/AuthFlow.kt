@@ -318,11 +318,13 @@ private fun WelcomeScreen(
                 .padding(horizontal = 24.dp, vertical = 18.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            val welcomeScrollState = rememberScrollState()
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScroll(welcomeScrollState)
+                    .verticalScrollbar(welcomeScrollState),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Spacer(Modifier.height(8.dp))
@@ -655,6 +657,7 @@ private fun LoginScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
             .verticalScroll(scrollState)
+            .verticalScrollbar(scrollState)
             .padding(horizontal = 24.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -1376,6 +1379,7 @@ private fun SetPasswordScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
             .verticalScroll(scrollState)
+            .verticalScrollbar(scrollState)
             .padding(horizontal = 24.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
