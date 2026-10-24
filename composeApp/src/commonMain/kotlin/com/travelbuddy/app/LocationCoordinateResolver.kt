@@ -139,14 +139,13 @@ object LocationCoordinateResolver {
      * Resolves geographic coordinates for a given city name, full address, or pasted coordinates/links.
      * Sanitizes inputs, extracts GPS coordinates if present, and searches known database.
      */
-    fun resolveCoordinates(cityName: String, fallbackLat: Double = 12.9716, fallbackLng: Double = 77.5946): Pair<Double, Double> {
+    fun resolveCoordinates(cityName: String, fallbackLat: Double = 0.0, fallbackLng: Double = 0.0): Pair<Double, Double> {
         val clean = cityName.trim()
         if (clean.isBlank()) return Pair(fallbackLat, fallbackLng)
 
         // 1. Live / Current GPS location check or generic defaults check
         val lower = clean.lowercase()
-        val isGenericDefault = clean.contains("12.9716") ||
-                lower.contains("current location") ||
+        val isGenericDefault = lower.contains("current location") ||
                 lower.contains("live location") ||
                 lower == "my location" ||
                 lower == "starting point" ||
@@ -154,10 +153,10 @@ object LocationCoordinateResolver {
 
         if (isGenericDefault) {
             val live = PlatformLocation.getCurrentLocation()
-            if (live != null && live.latitude != 0.0 && live.latitude != 12.9716) {
+            if (live != null && live.latitude != 0.0) {
                 return Pair(live.latitude, live.longitude)
             }
-            if (fallbackLat != 0.0 && fallbackLat != 12.9716) {
+            if (fallbackLat != 0.0 && fallbackLng != 0.0) {
                 return Pair(fallbackLat, fallbackLng)
             }
         }
@@ -173,10 +172,10 @@ object LocationCoordinateResolver {
             }
         }
 
-        // 3. Real Geocoding (Google Geocoder on Android: resolves exact home, street, building, or copy-pasted address)
+        // 3. Real Geocoding (Google Geocoder on Android / Nominatim: resolves exact home, street, building, or copy-pasted address)
         try {
             val geocoded = PlatformLocation.geocodeAddress(clean)
-            if (geocoded != null) {
+            if (geocoded != null && geocoded.first != 0.0) {
                 return geocoded
             }
         } catch (_: Exception) {}
@@ -184,7 +183,7 @@ object LocationCoordinateResolver {
         // 4. Direct match in dictionary
         cityCoordinates[lower]?.let { return it }
 
-        // 5. Comma-separated address token match (e.g. "MG Road, Indiranagar, Bengaluru, Karnataka 560038")
+        // 5. Comma-separated address token match
         val tokens = lower.split(',', '-', ';', ' ', '/').map { it.trim() }.filter { it.length >= 3 }
         for (token in tokens) {
             cityCoordinates[token]?.let { return it }
@@ -198,43 +197,26 @@ object LocationCoordinateResolver {
         }
 
         // 7. If coordinates or fallback provided, use them
-        if (fallbackLat != 0.0 && fallbackLng != 0.0 && fallbackLat != 12.9716) {
+        if (fallbackLat != 0.0 && fallbackLng != 0.0) {
             return Pair(fallbackLat, fallbackLng)
         }
 
-        // 8. If clean input has comma/dash tokens, keep fallback
         return Pair(fallbackLat, fallbackLng)
     }
 
     /**
      * Converts exact GPS lat/long coordinates to a human-readable city or locality name.
-     * Uses platform reverse geocoder if available, otherwise identifies the nearest city or locality.
+     * Uses platform reverse geocoder if available. Never returns nearby hardcoded cities.
      */
     fun resolveNearestCityOrArea(latitude: Double, longitude: Double): String {
         if (latitude == 0.0 && longitude == 0.0) return "Current Location"
-        // 1. Try platform reverse geocode
+        // 1. Try platform reverse geocode (native + online)
         try {
             val geocoded = PlatformLocation.reverseGeocode(latitude, longitude)
             if (!geocoded.isNullOrBlank()) {
                 return geocoded
             }
         } catch (_: Exception) {}
-
-        // 2. Identify nearest city or locality from dictionary if within close proximity (< 10km)
-        var minDistanceKm = Double.MAX_VALUE
-        var closestPlace: String? = null
-        for ((name, coords) in cityCoordinates) {
-            val dist = haversineDistanceKm(latitude, longitude, coords.first, coords.second)
-            if (dist < minDistanceKm) {
-                minDistanceKm = dist
-                closestPlace = name
-            }
-        }
-
-        if (closestPlace != null && minDistanceKm <= 10.0) {
-            val formatted = closestPlace.split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
-            return formatted
-        }
 
         val latStr = (round(latitude * 10000.0) / 10000.0).toString()
         val lngStr = (round(longitude * 10000.0) / 10000.0).toString()
@@ -246,8 +228,11 @@ object LocationCoordinateResolver {
      * Straight-line distance multiplied by the average Indian highway road tortuosity factor (1.24x).
      */
     fun calculateRoadDistanceKm(sourceName: String, destinationName: String): Double {
-        val (sLat, sLng) = resolveCoordinates(sourceName, 12.9716, 77.5946)
-        val (dLat, dLng) = resolveCoordinates(destinationName, 17.9104, 77.5199)
+        val live = PlatformLocation.getCurrentLocation()
+        val defLat = live?.latitude ?: 0.0
+        val defLng = live?.longitude ?: 0.0
+        val (sLat, sLng) = resolveCoordinates(sourceName, defLat, defLng)
+        val (dLat, dLng) = resolveCoordinates(destinationName, 0.0, 0.0)
 
         val directKm = haversineDistanceKm(sLat, sLng, dLat, dLng)
         if (directKm < 1.0) return 8.5 // Local intra-city route

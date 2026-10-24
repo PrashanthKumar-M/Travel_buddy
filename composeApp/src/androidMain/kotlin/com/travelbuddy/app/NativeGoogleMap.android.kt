@@ -173,20 +173,20 @@ actual fun NativeGoogleMapView(
                             val live = PlatformLocation.getCurrentLocation()
                             val myLoc = try { map.myLocation } catch (_: Exception) { null }
                             val targetLat = when {
-                                currentUserLat != 0.0 && currentUserLat != 12.9716 -> currentUserLat
-                                live != null && live.latitude != 0.0 && live.latitude != 12.9716 -> live.latitude
                                 myLoc != null && myLoc.latitude != 0.0 -> myLoc.latitude
+                                live != null && live.latitude != 0.0 -> live.latitude
                                 currentUserLat != 0.0 -> currentUserLat
-                                else -> 12.9716
+                                else -> 0.0
                             }
                             val targetLng = when {
-                                currentUserLng != 0.0 && currentUserLng != 77.5946 -> currentUserLng
-                                live != null && live.longitude != 0.0 && live.longitude != 77.5946 -> live.longitude
                                 myLoc != null && myLoc.longitude != 0.0 -> myLoc.longitude
+                                live != null && live.longitude != 0.0 -> live.longitude
                                 currentUserLng != 0.0 -> currentUserLng
-                                else -> 77.5946
+                                else -> 0.0
                             }
-                            map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(targetLat, targetLng), 16f))
+                            if (targetLat != 0.0 && targetLng != 0.0) {
+                                map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(targetLat, targetLng), 16f))
+                            }
                         }
                     }
                 ) {
@@ -302,9 +302,6 @@ private fun renderGoogleMapContent(
     val mapLoc = try { map.myLocation } catch (_: Exception) { null }
 
     val effectiveUserLat = when {
-        currLat != 0.0 && currLat != 12.9716 -> currLat
-        liveLoc != null && liveLoc.latitude != 0.0 && liveLoc.latitude != 12.9716 -> liveLoc.latitude
-        mapLoc != null && mapLoc.latitude != 0.0 && mapLoc.latitude != 12.9716 -> mapLoc.latitude
         currLat != 0.0 -> currLat
         liveLoc != null && liveLoc.latitude != 0.0 -> liveLoc.latitude
         mapLoc != null && mapLoc.latitude != 0.0 -> mapLoc.latitude
@@ -312,9 +309,6 @@ private fun renderGoogleMapContent(
     }
 
     val effectiveUserLng = when {
-        currLng != 0.0 && currLng != 77.5946 -> currLng
-        liveLoc != null && liveLoc.longitude != 0.0 && liveLoc.longitude != 77.5946 -> liveLoc.longitude
-        mapLoc != null && mapLoc.longitude != 0.0 && mapLoc.longitude != 77.5946 -> mapLoc.longitude
         currLng != 0.0 -> currLng
         liveLoc != null && liveLoc.longitude != 0.0 -> liveLoc.longitude
         mapLoc != null && mapLoc.longitude != 0.0 -> mapLoc.longitude
@@ -322,17 +316,13 @@ private fun renderGoogleMapContent(
     }
 
     // 2. Determine authentic starting coordinates
-    val effectiveSrcLat = if (srcLat == 12.9716 && srcLng == 77.5946 && effectiveUserLat != 0.0 && effectiveUserLat != 12.9716) {
-        effectiveUserLat
-    } else if (srcLat != 0.0) {
+    val effectiveSrcLat = if (srcLat != 0.0) {
         srcLat
     } else {
         effectiveUserLat
     }
 
-    val effectiveSrcLng = if (srcLat == 12.9716 && srcLng == 77.5946 && effectiveUserLng != 0.0 && effectiveUserLng != 77.5946) {
-        effectiveUserLng
-    } else if (srcLng != 0.0) {
+    val effectiveSrcLng = if (srcLng != 0.0) {
         srcLng
     } else {
         effectiveUserLng

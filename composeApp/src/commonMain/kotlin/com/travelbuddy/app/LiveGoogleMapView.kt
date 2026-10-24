@@ -111,25 +111,21 @@ fun LiveGoogleMapView(
     }
 
     val activeUserLat = when {
-        currentUserLat != 0.0 && currentUserLat != 12.9716 -> currentUserLat
-        realLocationState.value != null && realLocationState.value!!.latitude != 0.0 && realLocationState.value!!.latitude != 12.9716 -> realLocationState.value!!.latitude
-        PlatformLocation.getCurrentLocation() != null && PlatformLocation.getCurrentLocation()!!.latitude != 0.0 && PlatformLocation.getCurrentLocation()!!.latitude != 12.9716 -> PlatformLocation.getCurrentLocation()!!.latitude
         currentUserLat != 0.0 -> currentUserLat
-        realLocationState.value != null -> realLocationState.value!!.latitude
+        realLocationState.value != null && realLocationState.value!!.latitude != 0.0 -> realLocationState.value!!.latitude
+        PlatformLocation.getCurrentLocation() != null && PlatformLocation.getCurrentLocation()!!.latitude != 0.0 -> PlatformLocation.getCurrentLocation()!!.latitude
         else -> 0.0
     }
     val activeUserLng = when {
-        currentUserLng != 0.0 && currentUserLng != 77.5946 -> currentUserLng
-        realLocationState.value != null && realLocationState.value!!.longitude != 0.0 && realLocationState.value!!.longitude != 77.5946 -> realLocationState.value!!.longitude
-        PlatformLocation.getCurrentLocation() != null && PlatformLocation.getCurrentLocation()!!.longitude != 0.0 && PlatformLocation.getCurrentLocation()!!.longitude != 77.5946 -> PlatformLocation.getCurrentLocation()!!.longitude
         currentUserLng != 0.0 -> currentUserLng
-        realLocationState.value != null -> realLocationState.value!!.longitude
+        realLocationState.value != null && realLocationState.value!!.longitude != 0.0 -> realLocationState.value!!.longitude
+        PlatformLocation.getCurrentLocation() != null && PlatformLocation.getCurrentLocation()!!.longitude != 0.0 -> PlatformLocation.getCurrentLocation()!!.longitude
         else -> 0.0
     }
 
     // Coordinate resolution
     val (resolvedSrcLat, resolvedSrcLng) = remember(sourceName, sourceLat, sourceLng, activeUserLat, activeUserLng) {
-        if (sourceLat != 0.0 && sourceLng != 0.0 && sourceLat != 12.9716) {
+        if (sourceLat != 0.0 && sourceLng != 0.0) {
             Pair(sourceLat, sourceLng)
         } else if (sourceName.isBlank() || sourceName == "Starting Point" || sourceName.contains("12.9716")) {
             if (activeUserLat != 0.0 && activeUserLng != 0.0) {
@@ -251,7 +247,7 @@ fun LiveGoogleMapView(
                                 val locAddr = realLocationState.value?.address
                                 if (!locAddr.isNullOrBlank()) locAddr
                                 else if (cleanSrc.isNotBlank() && cleanSrc != "Starting Point") cleanSrc
-                                else "Bengaluru, India"
+                                else "Live Location Active"
                             },
                             fontSize = 11.sp,
                             color = Color(0xFF1A73E8),

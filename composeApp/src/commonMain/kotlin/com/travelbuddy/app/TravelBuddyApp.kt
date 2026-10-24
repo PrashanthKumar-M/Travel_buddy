@@ -2017,7 +2017,7 @@ private fun CreateTripDialog(
     LaunchedEffect(Unit) {
         if (source.isBlank()) {
             val live = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
-            if (live != null && live.latitude != 0.0 && live.latitude != 12.9716) {
+            if (live != null && live.latitude != 0.0) {
                 sourceLat = live.latitude
                 sourceLng = live.longitude
                 val geocoded = PlatformLocation.reverseGeocode(live.latitude, live.longitude)
@@ -2121,7 +2121,8 @@ private fun CreateTripDialog(
                                     destSuggestions = PlaceSearchService.searchPlaces(it)
                                 }
                             },
-                            label = { Text("Destination (e.g. Goa, Ooty, Mysuru)") },
+                            label = { Text("Destination") },
+                            placeholder = { Text("Search address, area or landmark") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             leadingIcon = {
@@ -2175,7 +2176,8 @@ private fun CreateTripDialog(
                                     sourceSuggestions = PlaceSearchService.searchPlaces(it)
                                 }
                             },
-                            label = { Text("Starting Location (e.g. Bengaluru, Mumbai)") },
+                            label = { Text("Starting Location") },
+                            placeholder = { Text("Search address, area or landmark") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             leadingIcon = {
@@ -2493,20 +2495,34 @@ private fun CreateTripDialog(
                         var finalDstLng = destLng
 
                         // Resolve source coordinates if manual text was entered
-                        if (finalSrcLat == 0.0 && source.isNotBlank()) {
+                        if ((finalSrcLat == 0.0 || finalSrcLng == 0.0) && source.isNotBlank()) {
                             val resolved = PlatformLocation.geocodeAddress(source)
-                            if (resolved != null) {
+                            if (resolved != null && resolved.first != 0.0) {
                                 finalSrcLat = resolved.first
                                 finalSrcLng = resolved.second
+                            } else {
+                                val searchResults = PlaceSearchService.searchPlaces(source)
+                                val firstMatch = searchResults.firstOrNull { it.latitude != 0.0 }
+                                if (firstMatch != null) {
+                                    finalSrcLat = firstMatch.latitude
+                                    finalSrcLng = firstMatch.longitude
+                                }
                             }
                         }
 
                         // Resolve destination coordinates if manual text was entered
-                        if (finalDstLat == 0.0 && destination.isNotBlank()) {
+                        if ((finalDstLat == 0.0 || finalDstLng == 0.0) && destination.isNotBlank()) {
                             val resolved = PlatformLocation.geocodeAddress(destination)
-                            if (resolved != null) {
+                            if (resolved != null && resolved.first != 0.0) {
                                 finalDstLat = resolved.first
                                 finalDstLng = resolved.second
+                            } else {
+                                val searchResults = PlaceSearchService.searchPlaces(destination)
+                                val firstMatch = searchResults.firstOrNull { it.latitude != 0.0 }
+                                if (firstMatch != null) {
+                                    finalDstLat = firstMatch.latitude
+                                    finalDstLng = firstMatch.longitude
+                                }
                             }
                         }
 
@@ -2929,8 +2945,8 @@ private fun TrackingScreen(
                         } else {
                             LocationCoordinateResolver.resolveCoordinates(activeTrip?.destination ?: "")
                         }
-                        val myRealLat = currentLiveLocation?.latitude ?: (if (resolvedSrcLat != 12.9716) resolvedSrcLat else 0.0)
-                        val myRealLng = currentLiveLocation?.longitude ?: (if (resolvedSrcLng != 77.5946) resolvedSrcLng else 0.0)
+                        val myRealLat = currentLiveLocation?.latitude ?: resolvedSrcLat
+                        val myRealLng = currentLiveLocation?.longitude ?: resolvedSrcLng
 
                         LiveGoogleMapView(
                             sourceName = srcName,
@@ -3533,8 +3549,8 @@ private fun TrackingScreen(
                     } else {
                         LocationCoordinateResolver.resolveCoordinates(activeTrip?.destination ?: "")
                     }
-                    val myRealLat = currentLiveLocation?.latitude ?: (if (resolvedSrcLat != 12.9716) resolvedSrcLat else 0.0)
-                    val myRealLng = currentLiveLocation?.longitude ?: (if (resolvedSrcLng != 77.5946) resolvedSrcLng else 0.0)
+                    val myRealLat = currentLiveLocation?.latitude ?: resolvedSrcLat
+                    val myRealLng = currentLiveLocation?.longitude ?: resolvedSrcLng
 
                     LiveGoogleMapView(
                         sourceName = srcName,
@@ -4722,7 +4738,7 @@ private fun CreateManualGroupDialog(
                 OutlinedTextField(
                     value = groupName,
                     onValueChange = { groupName = it },
-                    label = { Text("Group Name (e.g. Flat 402, Goa Trip)") },
+                    label = { Text("Group Name (e.g. Flat 402, Weekend Commute)") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
