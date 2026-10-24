@@ -198,6 +198,8 @@ internal fun ProfileScreen(
     onNameChange: (String) -> Unit = {},
     phone: String,
     tripCount: Int,
+    trips: List<com.travelbuddy.app.domain.Trip> = emptyList(),
+    onSelectTrip: ((com.travelbuddy.app.domain.Trip) -> Unit)? = null,
     onOpenVehicle: () -> Unit,
     onOpenSettlement: () -> Unit,
     darkMode: Boolean,
@@ -214,8 +216,16 @@ internal fun ProfileScreen(
     }
     var selectedAvatar by remember { mutableStateOf("MALE_1") }
     var tempEditValue by remember { mutableStateOf("") }
+    var editError by remember { mutableStateOf<String?>(null) }
     var editingField by remember { mutableStateOf<String?>(null) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    var showTripHistoryDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var showHelpSupportDialog by remember { mutableStateOf(false) }
+    var notificationsEnabled by remember { mutableStateOf(true) }
+    var highAccuracyGpsEnabled by remember { mutableStateOf(true) }
+    var autoSyncEnabled by remember { mutableStateOf(true) }
+    var cacheClearedBanner by remember { mutableStateOf(false) }
     val primaryText = if (darkMode) Color(0xFFEAF0F8) else Tb.Navy
     val secondaryText = if (darkMode) Color(0xFFAEB9C8) else Tb.Gray
     val scrollState = rememberScrollState()
@@ -306,15 +316,23 @@ internal fun ProfileScreen(
                 Column {
                     ProfileRow("Name", localName) {
                         tempEditValue = localName
+                        editError = null
                         editingField = "name"
                     }
                     ProfileRow("Email", localEmail) {
                         tempEditValue = localEmail
+                        editError = null
                         editingField = "email"
                     }
                     ProfileRow("Manage Vehicles", "1 vehicle", onOpenVehicle)
-                    ProfileRow("Trip History", "$tripCount trips", null)
+                    ProfileRow("Trip History", if (tripCount == 1) "1 trip" else "$tripCount trips") {
+                        showTripHistoryDialog = true
+                    }
                     ProfileRow("Expense History", "View settlements", onOpenSettlement)
+                    ProfileRow("Settings", "GPS, notifications & theme") {
+                        cacheClearedBanner = false
+                        showSettingsDialog = true
+                    }
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -325,7 +343,9 @@ internal fun ProfileScreen(
                         Text("Dark mode", Modifier.weight(1f), color = if (darkMode) Color(0xFFEAF0F8) else Tb.Navy, fontSize = 13.sp)
                         Switch(checked = darkMode, onCheckedChange = { onToggleDarkMode() })
                     }
-                    ProfileRow("Help & Support", "", null)
+                    ProfileRow("Help & Support", "FAQs & 24/7 support") {
+                        showHelpSupportDialog = true
+                    }
                 }
             }
 
@@ -404,17 +424,23 @@ internal fun ProfileScreen(
 
     editingField?.let { field ->
         AlertDialog(
-            onDismissRequest = { editingField = null },
+            onDismissRequest = { editingField = null; editError = null },
             title = { Text("Edit ${if (field == "name") "Name" else "Email"}", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = tempEditValue,
-                        onValueChange = { tempEditValue = it },
+                        onValueChange = {
+                            tempEditValue = it
+                            editError = null
+                        },
                         label = { Text(if (field == "name") "Full Name" else "Email Address") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
+                    editError?.let { err ->
+                        Text(err, fontSize = 12.sp, color = Tb.Red, fontWeight = FontWeight.SemiBold)
+                    }
                     Text(
                         "Changes will update across your greeting, trips, and account.",
                         fontSize = 12.sp,
@@ -425,24 +451,214 @@ internal fun ProfileScreen(
             confirmButton = {
                 Button(onClick = {
                     val clean = tempEditValue.trim()
-                    if (clean.isNotBlank()) {
-                        if (field == "name") {
-                            localName = clean
-                            onNameChange(clean)
-                            SessionManager.setUserName(clean)
-                        } else {
-                            localEmail = clean
-                            SessionManager.setUserEmail(clean)
-                        }
+                    if (clean.isBlank()) {
+                        editError = "Field cannot be empty."
+                        return@Button
                     }
-                    editingField = null
+                    if (field == "name") {
+                        localName = clean
+                        onNameChange(clean)
+                        SessionManager.setUserName(clean)
+                        editingField = null
+                    } else {
+                        if (!isValidEmailAddress(clean)) {
+                            editError = "Please enter a valid email address (e.g., name@domain.com)."
+                            return@Button
+                        }
+                        localEmail = clean
+                        SessionManager.setUserEmail(clean)
+                        editingField = null
+                    }
                 }) {
                     Text("Save")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { editingField = null }) {
+                TextButton(onClick = { editingField = null; editError = null }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showTripHistoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showTripHistoryDialog = false },
+            title = { Text("Trip History ($tripCount)", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.height(320.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (trips.isEmpty()) {
+                        Text(
+                            "No trips recorded yet. Create or join a trip from the Trips tab to build your travel history.",
+                            fontSize = 13.sp,
+                            color = secondaryText
+                        )
+                    } else {
+                        trips.forEach { trip ->
+                            val memberCnt = trip.members.size.coerceAtLeast(1)
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (darkMode) Color(0xFF151C26) else Color(0xFFF8FAFC),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (darkMode) Color(0xFF2C394B) else Color(0xFFE2E8F0)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        showTripHistoryDialog = false
+                                        onSelectTrip?.invoke(trip)
+                                    }
+                            ) {
+                                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(trip.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = primaryText)
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = Tb.Blue.copy(alpha = 0.12f)
+                                        ) {
+                                            Text(
+                                                trip.id,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Tb.Blue,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        "${trip.source.ifBlank { "Start" }} → ${trip.destination.ifBlank { "Destination" }}",
+                                        fontSize = 12.sp,
+                                        color = secondaryText
+                                    )
+                                    Text(
+                                        "${trip.dates} • ${if (memberCnt == 1) "1 member" else "$memberCnt members"}",
+                                        fontSize = 11.sp,
+                                        color = Tb.Green,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showTripHistoryDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    if (showSettingsDialog) {
+        AlertDialog(
+            onDismissRequest = { showSettingsDialog = false },
+            title = { Text("App Settings", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("High-Accuracy Live GPS", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = primaryText)
+                            Text("Pinpoint 2-second multi-rider location updates", fontSize = 11.sp, color = secondaryText)
+                        }
+                        Switch(checked = highAccuracyGpsEnabled, onCheckedChange = { highAccuracyGpsEnabled = it })
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Trip & SOS Notifications", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = primaryText)
+                            Text("Alerts for group chat, route divergence & SOS", fontSize = 11.sp, color = secondaryText)
+                        }
+                        Switch(checked = notificationsEnabled, onCheckedChange = { notificationsEnabled = it })
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Auto-Sync Cloud Trips", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = primaryText)
+                            Text("Keep active trip & expenses synced in real time", fontSize = 11.sp, color = secondaryText)
+                        }
+                        Switch(checked = autoSyncEnabled, onCheckedChange = { autoSyncEnabled = it })
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Dark Theme", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = primaryText)
+                            Text("Switch between light and dark appearance", fontSize = 11.sp, color = secondaryText)
+                        }
+                        Switch(checked = darkMode, onCheckedChange = { onToggleDarkMode() })
+                    }
+                    TextButton(
+                        onClick = { cacheClearedBanner = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (cacheClearedBanner) "✓ Map & Route Cache Cleared" else "Clear Local Map Cache", color = Tb.Blue)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showSettingsDialog = false }) {
+                    Text("Done")
+                }
+            }
+        )
+    }
+
+    if (showHelpSupportDialog) {
+        AlertDialog(
+            onDismissRequest = { showHelpSupportDialog = false },
+            title = { Text("Help & Support", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.height(340.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Frequently Asked Questions", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Tb.Blue)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("• How do I track another rider live?", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = primaryText)
+                        Text("Copy your Trip ID from the Trips or Track screen and share it. When your friend joins using that Trip ID, both locations and the blue leader-member line update live.", fontSize = 11.sp, color = secondaryText)
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("• How does Emergency SOS work?", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = primaryText)
+                        Text("Tap the red SOS button at the top bar to broadcast your live GPS coordinates to your trip group and emergency contacts.", fontSize = 11.sp, color = secondaryText)
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("• How are shared expenses settled?", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = primaryText)
+                        Text("Open the Split tab to log fuel, food, or stay expenses and view simplified settlements.", fontSize = 11.sp, color = secondaryText)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (darkMode) Color(0xFF151C26) else Color(0xFFEFF6FF),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Contact Travel Buddy Support", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Tb.Blue)
+                            Text("Email: support@travelbuddy.app", fontSize = 11.sp, color = primaryText)
+                            Text("24x7 Emergency Helpline: 112", fontSize = 11.sp, color = primaryText)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        Button(
+                            onClick = { PlatformShare.copyToClipboard("support@travelbuddy.app", "Support Email") },
+                            colors = ButtonDefaults.buttonColors(containerColor = Tb.Blue),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Copy Email", fontSize = 11.sp, color = Color.White)
+                        }
+                        Button(
+                            onClick = { PlatformShare.openDialer("112") },
+                            colors = ButtonDefaults.buttonColors(containerColor = Tb.Red),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Call 112", fontSize = 11.sp, color = Color.White)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showHelpSupportDialog = false }) {
+                    Text("Close")
                 }
             }
         )

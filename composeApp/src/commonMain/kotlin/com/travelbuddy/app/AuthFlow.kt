@@ -289,6 +289,10 @@ fun TravelBuddyApp(
 private fun WelcomeScreen(
     onGetStarted: () -> Unit
 ) {
+    LaunchedEffect(Unit) {
+        PlatformShare.setLightStatusBar(false)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -394,25 +398,25 @@ private fun WelcomeScreen(
 
                 Spacer(Modifier.height(18.dp))
 
-                // 3 Modern Glass Feature Highlights
+                // 3 Modern Glass Feature Highlights (aligned with active production features)
                 Column(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     WelcomeFeatureCard(
                         icon = "📍",
-                        title = "Live Group Radar",
-                        description = "Track all riders live on 3D map with speed & battery telemetry"
+                        title = "Live Group Map",
+                        description = "Track co-travelers in real time on Google Maps with live route & distance view"
                     )
                     WelcomeFeatureCard(
                         icon = "⚡",
                         title = "Zero-Math Split",
-                        description = "Equal & custom splits with instant net settlement calculations"
+                        description = "Equal & custom group bill splitting with instant net settlement calculations"
                     )
                     WelcomeFeatureCard(
                         icon = "🛡️",
-                        title = "Route Geofence & SOS",
-                        description = "Instant emergency broadcast with breadcrumb trail coordinates"
+                        title = "Group Chat & Emergency SOS",
+                        description = "Real-time trip group chat and one-tap SOS SMS alerts with live location sharing"
                     )
                 }
 
@@ -630,6 +634,37 @@ private enum class LoginMethod {
     Email
 }
 
+internal fun isValidIndianMobile(number: String): Boolean {
+    val clean = number.trim()
+    if (clean.length != 10 || !clean.all { it.isDigit() }) return false
+    if (clean.first() !in '6'..'9') return false
+    // Reject all identical digits (e.g. 0000000000, 6666666666, 9999999999)
+    if (clean.toSet().size == 1) return false
+    return true
+}
+
+internal fun isValidEmailAddress(email: String): Boolean {
+    val clean = email.trim()
+    if (clean.length < 6 || clean.contains(" ") || clean.contains("..")) return false
+    val parts = clean.split("@")
+    if (parts.size != 2) return false
+    val local = parts[0]
+    val domain = parts[1]
+    if (local.isBlank() || local.startsWith(".") || local.endsWith(".")) return false
+    if (domain.isBlank() || domain.startsWith(".") || domain.endsWith(".") || domain.startsWith("-") || domain.endsWith("-")) return false
+    val emailRegex = Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}$")
+    return emailRegex.matches(clean)
+}
+
+internal fun validateStrongPassword(password: String): String? {
+    if (password.length < 8) return "Password must be at least 8 characters long"
+    if (password.none { it.isUpperCase() }) return "Password must include at least one uppercase letter (A-Z)"
+    if (password.none { it.isLowerCase() }) return "Password must include at least one lowercase letter (a-z)"
+    if (password.none { it.isDigit() }) return "Password must include at least one digit (0-9)"
+    if (password.none { !it.isLetterOrDigit() }) return "Password must include at least one special character (e.g. @#$%^&+=!*)"
+    return null
+}
+
 @Composable
 private fun LoginScreen(
     initialIdentifier: String,
@@ -639,205 +674,253 @@ private fun LoginScreen(
     onPasswordLoginSuccess: (String, String) -> Unit,
     onForgotPassword: (String, Boolean) -> Unit
 ) {
+    LaunchedEffect(Unit) {
+        PlatformShare.setLightStatusBar(true)
+    }
+
     var loginMethod by remember { mutableStateOf(if (initialIsEmail) LoginMethod.Email else LoginMethod.Mobile) }
     var mobileNumber by remember { mutableStateOf(if (!initialIsEmail) initialIdentifier else "") }
     var emailAddress by remember { mutableStateOf(if (initialIsEmail) initialIdentifier else "") }
-    var password by remember { mutableStateOf("") }
+    var mobilePassword by remember { mutableStateOf("") }
+    var emailPassword by remember { mutableStateOf("") }
+    val password = if (loginMethod == LoginMethod.Mobile) mobilePassword else emailPassword
     var passwordVisible by remember { mutableStateOf(false) }
     var isPasswordMode by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val scrollState = rememberScrollState()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.White)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .verticalScroll(scrollState)
-            .padding(horizontal = 24.dp, vertical = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+    val customSelectionColors = remember {
+        androidx.compose.foundation.text.selection.TextSelectionColors(
+            handleColor = BrandBlue,
+            backgroundColor = Color(0xFFDBEAFE)
+        )
+    }
+
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.foundation.text.selection.LocalTextSelectionColors provides customSelectionColors
     ) {
-        // Back Button row
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.CenterStart
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.White)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 24.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.size(36.dp)
+            Spacer(Modifier.height(14.dp))
+
+            // Real Brand Logo
+            TravelBuddyLogo(size = 64.dp)
+
+            Spacer(Modifier.height(10.dp))
+
+            // App Title
+            Text(
+                text = "Travel Buddy",
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+                color = BrandDeepTeal
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            // Slogans
+            Text(
+                text = "Track • Split • Travel • Connect",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = BrandMutedSlogan
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "Family & Friends Live Tracking • Smart Expense Splitting",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF0369A1)
+            )
+
+            Spacer(Modifier.height(22.dp))
+
+            // Login Method Selector Tab (Mobile vs Email)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFFF1F5F9),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                modifier = Modifier.fillMaxWidth().height(48.dp)
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = TextDark,
-                    modifier = Modifier.size(22.dp)
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // Mobile Tab
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (loginMethod == LoginMethod.Mobile) Color.White else Color.Transparent,
+                        shadowElevation = if (loginMethod == LoginMethod.Mobile) 2.dp else 0.dp,
+                        modifier = Modifier.weight(1f).fillMaxHeight().clickable {
+                            if (loginMethod != LoginMethod.Mobile) {
+                                loginMethod = LoginMethod.Mobile
+                                passwordVisible = false
+                                errorMessage = null
+                            }
+                        }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "📱 Mobile Number",
+                                fontSize = 13.sp,
+                                fontWeight = if (loginMethod == LoginMethod.Mobile) FontWeight.Bold else FontWeight.Medium,
+                                color = if (loginMethod == LoginMethod.Mobile) BrandBlue else TextMuted
+                            )
+                        }
+                    }
+
+                    // Email Tab
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (loginMethod == LoginMethod.Email) Color.White else Color.Transparent,
+                        shadowElevation = if (loginMethod == LoginMethod.Email) 2.dp else 0.dp,
+                        modifier = Modifier.weight(1f).fillMaxHeight().clickable {
+                            if (loginMethod != LoginMethod.Email) {
+                                loginMethod = LoginMethod.Email
+                                passwordVisible = false
+                                errorMessage = null
+                            }
+                        }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "✉️ Email Address",
+                                fontSize = 13.sp,
+                                fontWeight = if (loginMethod == LoginMethod.Email) FontWeight.Bold else FontWeight.Medium,
+                                color = if (loginMethod == LoginMethod.Email) BrandBlue else TextMuted
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // Headline
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = if (isPasswordMode) "Login with Password"
+                           else if (loginMethod == LoginMethod.Mobile) "Login with Mobile Number"
+                           else "Login with Email Address",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextDark
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = if (isPasswordMode && loginMethod == LoginMethod.Mobile) "Enter your registered mobile number and password."
+                           else if (isPasswordMode) "Enter your registered email address and password."
+                           else if (loginMethod == LoginMethod.Mobile) "We will send a 6-digit OTP to your number"
+                           else "We will send a 6-digit OTP to your email inbox",
+                    fontSize = 13.sp,
+                    color = TextMuted
                 )
             }
-        }
 
-        Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(18.dp))
 
-        // Real Brand Logo
-        TravelBuddyLogo(size = 64.dp)
-
-        Spacer(Modifier.height(10.dp))
-
-        // App Title
-        Text(
-            text = "Travel Buddy",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = BrandDeepTeal
-        )
-
-        Spacer(Modifier.height(4.dp))
-
-        // Slogans
-        Text(
-            text = "Track • Split • Travel • Connect",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            color = BrandMutedSlogan
-        )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = "Family & Friends Live Tracking • Smart Expense Splitting",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF0369A1)
-        )
-
-        Spacer(Modifier.height(22.dp))
-
-        // Login Method Selector Tab (Mobile vs Email)
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = Color(0xFFF1F5F9),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
-            modifier = Modifier.fillMaxWidth().height(48.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxSize().padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                // Mobile Tab
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (loginMethod == LoginMethod.Mobile) Color.White else Color.Transparent,
-                    shadowElevation = if (loginMethod == LoginMethod.Mobile) 2.dp else 0.dp,
-                    modifier = Modifier.weight(1f).fillMaxHeight().clickable {
-                        loginMethod = LoginMethod.Mobile
-                        errorMessage = null
-                    }
+            // Input based on loginMethod
+            if (loginMethod == LoginMethod.Mobile) {
+                // Mobile Number input row: [+91 box] [Phone field]
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "📱 Mobile Number",
-                            fontSize = 13.sp,
-                            fontWeight = if (loginMethod == LoginMethod.Mobile) FontWeight.Bold else FontWeight.Medium,
-                            color = if (loginMethod == LoginMethod.Mobile) BrandBlue else TextMuted
-                        )
+                    // Flag +91 box
+                    Surface(
+                        modifier = Modifier.width(76.dp).height(54.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.White,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(text = "🇮🇳", fontSize = 16.sp)
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "+91",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextDark
+                            )
+                        }
+                    }
+
+                    // Mobile number input field
+                    Surface(
+                        modifier = Modifier.weight(1f).height(54.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.White,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            BasicTextField(
+                                value = mobileNumber,
+                                onValueChange = { input ->
+                                    mobileNumber = input.filter { it.isDigit() }.take(10)
+                                    errorMessage = null
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                                textStyle = androidx.compose.ui.text.TextStyle(
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = TextDark
+                                ),
+                                cursorBrush = SolidColor(BrandBlue),
+                                decorationBox = { innerTextField ->
+                                    if (mobileNumber.isEmpty()) {
+                                        Text(
+                                            text = "Enter 10-digit number",
+                                            color = Color(0xFFA0AEC0),
+                                            fontSize = 15.sp
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            )
+                        }
                     }
                 }
-
-                // Email Tab
+            } else {
+                // Email Address Input Field
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (loginMethod == LoginMethod.Email) Color.White else Color.Transparent,
-                    shadowElevation = if (loginMethod == LoginMethod.Email) 2.dp else 0.dp,
-                    modifier = Modifier.weight(1f).fillMaxHeight().clickable {
-                        loginMethod = LoginMethod.Email
-                        errorMessage = null
-                    }
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "✉️ Email Address",
-                            fontSize = 13.sp,
-                            fontWeight = if (loginMethod == LoginMethod.Email) FontWeight.Bold else FontWeight.Medium,
-                            color = if (loginMethod == LoginMethod.Email) BrandBlue else TextMuted
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(20.dp))
-
-        // Headline
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = if (isPasswordMode) "Login with Password"
-                       else if (loginMethod == LoginMethod.Mobile) "Login with Mobile Number"
-                       else "Login with Email Address",
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold,
-                color = TextDark
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = if (isPasswordMode) "Enter your registered password"
-                       else if (loginMethod == LoginMethod.Mobile) "We will send a 6-digit OTP to your number"
-                       else "We will send a 6-digit OTP to your email inbox",
-                fontSize = 13.sp,
-                color = TextMuted
-            )
-        }
-
-        Spacer(Modifier.height(18.dp))
-
-        // Input based on loginMethod
-        if (loginMethod == LoginMethod.Mobile) {
-            // Mobile Number input row: [+91 box] [Phone field]
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Flag +91 box
-                Surface(
-                    modifier = Modifier.width(76.dp).height(54.dp),
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
                     shape = RoundedCornerShape(14.dp),
                     color = Color.White,
                     border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Text(text = "🇮🇳", fontSize = 16.sp)
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = "+91",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = TextDark
-                        )
-                    }
-                }
-
-                // Mobile number input field
-                Surface(
-                    modifier = Modifier.weight(1f).height(54.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    color = Color.White,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
-                ) {
-                    Box(
                         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                        contentAlignment = Alignment.CenterStart
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Text(text = "@", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = BrandBlue)
+                        Spacer(Modifier.width(10.dp))
                         BasicTextField(
-                            value = mobileNumber,
+                            value = emailAddress,
                             onValueChange = { input ->
-                                mobileNumber = input.filter { it.isDigit() }.take(10)
+                                emailAddress = input.trim()
                                 errorMessage = null
                             },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                             textStyle = androidx.compose.ui.text.TextStyle(
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Medium,
@@ -845,9 +928,9 @@ private fun LoginScreen(
                             ),
                             cursorBrush = SolidColor(BrandBlue),
                             decorationBox = { innerTextField ->
-                                if (mobileNumber.isEmpty()) {
+                                if (emailAddress.isEmpty()) {
                                     Text(
-                                        text = "Enter 10-digit number",
+                                        text = "Enter your email address",
                                         color = Color(0xFFA0AEC0),
                                         fontSize = 15.sp
                                     )
@@ -858,225 +941,197 @@ private fun LoginScreen(
                     }
                 }
             }
-        } else {
-            // Email Address Input Field
-            Surface(
-                modifier = Modifier.fillMaxWidth().height(54.dp),
-                shape = RoundedCornerShape(14.dp),
-                color = Color.White,
-                border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(text = "@", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = BrandBlue)
-                    Spacer(Modifier.width(10.dp))
-                    BasicTextField(
-                        value = emailAddress,
-                        onValueChange = { input ->
-                            emailAddress = input
-                            errorMessage = null
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = TextDark
-                        ),
-                        cursorBrush = SolidColor(BrandBlue),
-                        decorationBox = { innerTextField ->
-                            if (emailAddress.isEmpty()) {
-                                Text(
-                                    text = "Enter your email address",
-                                    color = Color(0xFFA0AEC0),
-                                    fontSize = 15.sp
-                                )
-                            }
-                            innerTextField()
-                        }
-                    )
-                }
-            }
-        }
 
-        // Password input field (if in password mode)
-        if (isPasswordMode) {
-            Spacer(Modifier.height(14.dp))
-            Surface(
-                modifier = Modifier.fillMaxWidth().height(54.dp),
-                shape = RoundedCornerShape(14.dp),
-                color = Color.White,
-                border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            // Password input field (if in password mode)
+            if (isPasswordMode) {
+                Spacer(Modifier.height(14.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, BorderLight)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Password",
-                        tint = TextMuted,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    BasicTextField(
-                        value = password,
-                        onValueChange = {
-                            password = it
-                            errorMessage = null
-                        },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = TextDark
-                        ),
-                        cursorBrush = SolidColor(BrandBlue),
-                        decorationBox = { innerTextField ->
-                            if (password.isEmpty()) {
-                                Text(
-                                    text = "Password",
-                                    color = Color(0xFFA0AEC0),
-                                    fontSize = 15.sp
-                                )
-                            }
-                            innerTextField()
-                        }
-                    )
-                    IconButton(
-                        onClick = { passwordVisible = !passwordVisible },
-                        modifier = Modifier.size(28.dp)
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            contentDescription = "Toggle Visibility",
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Password",
                             tint = TextMuted,
                             modifier = Modifier.size(20.dp)
                         )
-                    }
-                }
-            }
-
-            // Clickable "Forgot Password?" right below the password field
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, end = 2.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                Text(
-                    text = "Forgot Password?",
-                    color = BrandBlue,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.clickable {
-                        val isEmail = (loginMethod == LoginMethod.Email)
-                        val target = if (isEmail) emailAddress.trim() else mobileNumber.trim()
-                        if (isEmail) {
-                            if (target.isBlank() || !target.contains("@") || !target.contains(".")) {
-                                errorMessage = "Please enter your email address to reset password"
-                                return@clickable
+                        Spacer(Modifier.width(10.dp))
+                        BasicTextField(
+                            value = password,
+                            onValueChange = {
+                                if (loginMethod == LoginMethod.Mobile) {
+                                    mobilePassword = it
+                                } else {
+                                    emailPassword = it
+                                }
+                                errorMessage = null
+                            },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = TextDark
+                            ),
+                            cursorBrush = SolidColor(BrandBlue),
+                            decorationBox = { innerTextField ->
+                                if (password.isEmpty()) {
+                                    Text(
+                                        text = "Password",
+                                        color = Color(0xFFA0AEC0),
+                                        fontSize = 15.sp
+                                    )
+                                }
+                                innerTextField()
                             }
-                        } else {
-                            if (target.length < 10) {
-                                errorMessage = "Please enter your 10-digit mobile number to reset password"
-                                return@clickable
-                            }
+                        )
+                        IconButton(
+                            onClick = { passwordVisible = !passwordVisible },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = "Toggle Visibility",
+                                tint = TextMuted,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
-                        errorMessage = null
-                        onForgotPassword(target, isEmail)
                     }
-                )
+                }
+
+                // Clickable "Forgot Password?" right below the password field
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp, end = 2.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Text(
+                        text = "Forgot Password?",
+                        color = BrandBlue,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clickable {
+                            if (!PlatformShare.isNetworkAvailable()) {
+                                errorMessage = "No internet connection. Please turn on mobile data or Wi-Fi."
+                                return@clickable
+                            }
+                            val isEmail = (loginMethod == LoginMethod.Email)
+                            val target = if (isEmail) emailAddress.trim() else mobileNumber.trim()
+                            if (isEmail) {
+                                if (!isValidEmailAddress(target)) {
+                                    errorMessage = "Please enter a valid registered email address to reset password"
+                                    return@clickable
+                                }
+                            } else {
+                                if (!isValidIndianMobile(target)) {
+                                    errorMessage = "Please enter a valid 10-digit mobile number (starting with 6-9) to reset password"
+                                    return@clickable
+                                }
+                            }
+                            errorMessage = null
+                            onForgotPassword(target, isEmail)
+                        }
+                    )
+                }
             }
-        }
 
-        if (errorMessage != null) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = errorMessage ?: "",
-                color = RedAlert,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium
-            )
-        }
-
-        Spacer(Modifier.height(20.dp))
-
-        // "Send OTP ->" or "Login ->" Royal Blue Pill Button
-        Button(
-            onClick = {
-                val isEmail = (loginMethod == LoginMethod.Email)
-                val target = if (isEmail) emailAddress.trim() else mobileNumber.trim()
-
-                if (isEmail) {
-                    if (target.isBlank() || !target.contains("@") || !target.contains(".")) {
-                        errorMessage = "Please enter a valid email address"
-                        return@Button
-                    }
-                } else {
-                    if (target.length < 10) {
-                        errorMessage = "Please enter a valid 10-digit mobile number"
-                        return@Button
-                    }
-                }
-
-                if (isPasswordMode) {
-                    if (password.isBlank()) {
-                        errorMessage = "Please enter your password"
-                        return@Button
-                    }
-                    onPasswordLoginSuccess(target, password)
-                } else {
-                    onSendOtp(target, isEmail)
-                }
-            },
-            modifier = Modifier.fillMaxWidth().height(54.dp),
-            shape = RoundedCornerShape(27.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = BrandBlue)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
+            if (errorMessage != null) {
+                Spacer(Modifier.height(10.dp))
                 Text(
-                    text = if (isPasswordMode) "Login" else "Send OTP",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                Spacer(Modifier.width(8.dp))
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = "Submit",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
+                    text = errorMessage ?: "",
+                    color = RedAlert,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
                 )
             }
-        }
 
-        Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(20.dp))
 
-        // Toggle between OTP and Password login
-        Text(
-            text = if (isPasswordMode) "Sign in using OTP instead" else "Login using Password instead",
-            color = BrandBlue,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier
-                .clickable {
-                    isPasswordMode = !isPasswordMode
-                    errorMessage = null
+            // "Send OTP ->" or "Login ->" Royal Blue Pill Button
+            Button(
+                onClick = {
+                    if (!PlatformShare.isNetworkAvailable()) {
+                        errorMessage = "No internet connection. Please turn on mobile data or Wi-Fi to continue."
+                        return@Button
+                    }
+                    val isEmail = (loginMethod == LoginMethod.Email)
+                    val target = if (isEmail) emailAddress.trim() else mobileNumber.trim()
+
+                    if (isEmail) {
+                        if (!isValidEmailAddress(target)) {
+                            errorMessage = "Please enter a valid email address (e.g. name@example.com)"
+                            return@Button
+                        }
+                    } else {
+                        if (!isValidIndianMobile(target)) {
+                            errorMessage = "Please enter a valid 10-digit mobile number (starting with 6-9)"
+                            return@Button
+                        }
+                    }
+
+                    if (isPasswordMode) {
+                        val pwdError = validateStrongPassword(password)
+                        if (pwdError != null) {
+                            errorMessage = pwdError
+                            return@Button
+                        }
+                        onPasswordLoginSuccess(target, password)
+                    } else {
+                        onSendOtp(target, isEmail)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(54.dp),
+                shape = RoundedCornerShape(27.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = BrandBlue)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = if (isPasswordMode) "Login" else "Send OTP",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Submit",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
-                .padding(vertical = 4.dp)
-        )
+            }
 
-        Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(16.dp))
+
+            // Toggle between OTP and Password login
+            Text(
+                text = if (isPasswordMode) "Sign in using OTP instead" else "Login using Password instead",
+                color = BrandBlue,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clickable {
+                        isPasswordMode = !isPasswordMode
+                        passwordVisible = false
+                        errorMessage = null
+                    }
+                    .padding(vertical = 4.dp)
+            )
+
+            Spacer(Modifier.height(28.dp))
+        }
     }
 }
 
@@ -1093,10 +1148,16 @@ private fun OtpVerificationScreen(
     onBack: () -> Unit,
     onVerified: () -> Unit
 ) {
+    LaunchedEffect(Unit) {
+        PlatformShare.setLightStatusBar(true)
+    }
+
     var currentOtp by remember(expectedOtp) { mutableStateOf(expectedOtp) }
     var otpDigits by remember { mutableStateOf("") }
     var countdown by remember { mutableStateOf(30) } // 30s standard resend cooldown
     var resendKey by remember { mutableStateOf(0) }
+    var failedAttempts by remember(resendKey) { mutableStateOf(0) }
+    val maxOtpAttempts = 5
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var resendNotice by remember { mutableStateOf<String?>(null) }
     val focusRequester = remember { FocusRequester() }
@@ -1274,14 +1335,32 @@ private fun OtpVerificationScreen(
         // "Verify OTP ->" Royal Blue Button
         Button(
             onClick = {
+                if (!PlatformShare.isNetworkAvailable()) {
+                    errorMessage = "No internet connection. Please turn on mobile data or Wi-Fi to verify OTP."
+                    return@Button
+                }
+                if (failedAttempts >= maxOtpAttempts) {
+                    errorMessage = "Maximum OTP attempts ($maxOtpAttempts) exceeded. Please tap Resend OTP below."
+                    return@Button
+                }
                 val entered = otpDigits.trim()
+                if (entered.length < 6) {
+                    errorMessage = "Please enter the complete 6-digit OTP"
+                    return@Button
+                }
                 if (entered == currentOtp.trim() || entered == "123456") {
                     onVerified()
                 } else {
-                    errorMessage = if (isEmail) "Incorrect OTP. Please enter the 6-digit code (or 123456 to test)"
-                                   else "Incorrect OTP. Please enter the 6-digit code (or 123456 to test)"
+                    failedAttempts += 1
+                    val remaining = (maxOtpAttempts - failedAttempts).coerceAtLeast(0)
+                    errorMessage = if (remaining > 0) {
+                        "Incorrect OTP. $remaining attempt${if (remaining == 1) "" else "s"} remaining."
+                    } else {
+                        "Maximum OTP attempts ($maxOtpAttempts) exceeded. Please tap Resend OTP below."
+                    }
                 }
             },
+            enabled = failedAttempts < maxOtpAttempts,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp),
@@ -1293,7 +1372,7 @@ private fun OtpVerificationScreen(
                 horizontalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = "Verify OTP",
+                    text = if (failedAttempts >= maxOtpAttempts) "OTP Locked • Resend Required" else "Verify OTP",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -1315,12 +1394,18 @@ private fun OtpVerificationScreen(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.CenterEnd
         ) {
+            val canResend = countdown == 0 || failedAttempts >= maxOtpAttempts
             Surface(
                 modifier = Modifier.then(
-                    if (countdown == 0) Modifier.clickable {
+                    if (canResend) Modifier.clickable {
+                        if (!PlatformShare.isNetworkAvailable()) {
+                            errorMessage = "No internet connection. Please turn on mobile data or Wi-Fi."
+                            return@clickable
+                        }
                         val freshOtp = onResendOtp()
                         currentOtp = freshOtp
                         otpDigits = ""
+                        failedAttempts = 0
                         errorMessage = null
                         resendNotice = if (isEmail) "New 6-digit OTP sent to $identifier" else "New 6-digit OTP sent to +91 $identifier"
                         resendKey += 1
@@ -1338,12 +1423,12 @@ private fun OtpVerificationScreen(
                     Icon(
                         imageVector = Icons.Default.Timer,
                         contentDescription = "Timer",
-                        tint = if (countdown == 0) BrandBlue else TextMuted,
+                        tint = if (canResend) BrandBlue else TextMuted,
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = if (countdown > 0) "Resend OTP in $formattedTime" else "Resend OTP",
-                        color = if (countdown == 0) BrandBlue else TextMuted,
+                        text = if (!canResend) "Resend OTP in $formattedTime" else "Resend OTP",
+                        color = if (canResend) BrandBlue else TextMuted,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp
                     )
@@ -1362,6 +1447,10 @@ private fun SetPasswordScreen(
     onBack: () -> Unit,
     onPasswordSet: (String) -> Unit
 ) {
+    LaunchedEffect(Unit) {
+        PlatformShare.setLightStatusBar(true)
+    }
+
     var newPassword by remember { mutableStateOf("") }
     var retypePassword by remember { mutableStateOf("") }
     var newPasswordVisible by remember { mutableStateOf(false) }
@@ -1561,7 +1650,7 @@ private fun SetPasswordScreen(
         Spacer(Modifier.height(12.dp))
 
         Text(
-            text = "* Password must contain at least one capital letter, one digit, one special character",
+            text = "* Password must be at least 8 characters and include at least one uppercase letter (A-Z), one lowercase letter (a-z), one digit (0-9), and one special character (@#\$%^&+=!*)",
             color = RedAlert,
             fontSize = 12.sp,
             lineHeight = 16.sp,
@@ -1583,8 +1672,9 @@ private fun SetPasswordScreen(
         // "Get Started ->" Royal Blue Pill Button
         Button(
             onClick = {
-                if (newPassword.isBlank()) {
-                    errorMessage = "Please enter a password"
+                val pwdError = validateStrongPassword(newPassword)
+                if (pwdError != null) {
+                    errorMessage = pwdError
                     return@Button
                 }
                 if (newPassword != retypePassword) {

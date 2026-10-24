@@ -386,6 +386,10 @@ internal fun TravelBuddyMain(
         }
     }
 
+    LaunchedEffect(darkMode) {
+        PlatformShare.setLightStatusBar(!darkMode)
+    }
+
     MaterialTheme(
         colorScheme = if (darkMode) darkColorScheme(
             primary = Blue, secondary = Green, surface = Color(0xFF1B2430), background = Color(0xFF10151C)
@@ -814,6 +818,14 @@ internal fun TravelBuddyMain(
                             },
                             phone = userPhone,
                             tripCount = trips.size,
+                            trips = trips,
+                            onSelectTrip = { trip ->
+                                activeTrip = trip
+                                TripStorage.saveActiveTripId(trip.id)
+                                activeTripCover = trip.coverImage ?: tripCovers[trip.id]
+                                members = deduplicateTripMembers(trip.members, currentUserName, trip.createdBy)
+                                selectedTab = AppTab.Track
+                            },
                             onOpenVehicle = { overlay = Overlay.Telemetry },
                             onOpenSettlement = { overlay = Overlay.Settlement },
                             darkMode = darkMode,
@@ -841,6 +853,15 @@ internal fun TravelBuddyMain(
                             },
                             phone = userPhone,
                             tripCount = trips.size,
+                            trips = trips,
+                            onSelectTrip = { trip ->
+                                activeTrip = trip
+                                TripStorage.saveActiveTripId(trip.id)
+                                activeTripCover = trip.coverImage ?: tripCovers[trip.id]
+                                members = deduplicateTripMembers(trip.members, currentUserName, trip.createdBy)
+                                overlay = null
+                                selectedTab = AppTab.Track
+                            },
                             onOpenVehicle = { overlay = Overlay.Telemetry },
                             onOpenSettlement = { overlay = Overlay.Settlement },
                             darkMode = darkMode,
@@ -1914,55 +1935,107 @@ private fun TripsScreen(
                             }
                         }
 
+                        if (!trip.coverImage.isNullOrBlank()) {
+                            Spacer(Modifier.height(10.dp))
+                            PlatformTripCoverImage(
+                                uri = trip.coverImage,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(110.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                            )
+                        }
+
                         Spacer(Modifier.height(10.dp))
 
-                        // Prominent Trip ID Badge with One-Tap Copy/Share
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (darkMode) Color(0xFF151D28) else Color(0xFFEFF6FF),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (darkMode) Color(0xFF253448) else Color(0xFFBFDBFE)
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
+                        // Prominent Trip ID Badge with Reliable One-Tap Clipboard Copy + Optional Share
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (darkMode) Color(0xFF151D28) else Color(0xFFEFF6FF),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (darkMode) Color(0xFF253448) else Color(0xFFBFDBFE)
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable {
+                                        clipboardManager.setText(AnnotatedString(trip.id))
+                                        PlatformShare.copyToClipboard(trip.id, "Trip ID")
+                                        copyTripFeedback = "✓ Trip ID '${trip.id}' copied to clipboard!"
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.VpnKey,
+                                            contentDescription = null,
+                                            tint = Blue,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            text = "Trip ID: ${trip.id}",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Blue,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            "Copy ID",
+                                            fontSize = 10.sp,
+                                            color = Blue,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = "Copy ID",
+                                            tint = Blue,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (darkMode) Color(0xFF151D28) else Color(0xFFEFF6FF),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (darkMode) Color(0xFF253448) else Color(0xFFBFDBFE)
+                                ),
+                                modifier = Modifier.clickable {
                                     clipboardManager.setText(AnnotatedString(trip.id))
-                                    copyTripFeedback = "Trip ID '${trip.id}' copied! Share with another user to track together."
+                                    PlatformShare.copyToClipboard(trip.id, "Trip ID")
+                                    copyTripFeedback = "✓ Trip ID '${trip.id}' copied!"
                                     PlatformShare.shareText(
                                         text = "Join my live trip '${trip.name}' on Travel Buddy!\nTrip ID: ${trip.id}\nTrack my live location in real-time.",
                                         title = "Share Trip ID"
                                     )
                                 }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.VpnKey,
-                                        contentDescription = null,
-                                        tint = Blue,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        text = "Trip ID: ${trip.id}",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Blue
-                                    )
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Tap to Copy", fontSize = 10.sp, color = Blue, fontWeight = FontWeight.Medium)
-                                    Spacer(Modifier.width(4.dp))
+                                Box(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
                                     Icon(
                                         imageVector = Icons.Default.Share,
-                                        contentDescription = "Copy ID",
+                                        contentDescription = "Share Trip ID",
                                         tint = Blue,
-                                        modifier = Modifier.size(12.dp)
+                                        modifier = Modifier.size(14.dp)
                                     )
                                 }
                             }
@@ -2027,7 +2100,9 @@ private fun TripsScreen(
 
                         Spacer(Modifier.height(10.dp))
 
-                        // Bottom info: dates & members
+                        // Bottom info: dates & verified member count pluralization ("0 members", "1 member", "N members")
+                        val verifiedMembers = deduplicateTripMembers(trip.members, currentUserName, trip.createdBy)
+                        val memberCount = verifiedMembers.size
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -2056,7 +2131,7 @@ private fun TripsScreen(
                                 )
                                 Spacer(Modifier.width(4.dp))
                                 Text(
-                                    text = "${trip.members.size} member${if (trip.members.size > 1) "s" else ""}",
+                                    text = if (memberCount == 1) "1 member" else "$memberCount members",
                                     fontSize = 12.sp,
                                     color = tbSubtextColor(),
                                     fontWeight = FontWeight.Medium
@@ -2288,6 +2363,20 @@ private fun TripsScreen(
     }
 }
 
+private fun parseDateOrderKey(dateStr: String): Int {
+    val clean = dateStr.trim()
+    if (clean.equals("Today", ignoreCase = true)) return 20261018
+    if (clean.equals("Tomorrow", ignoreCase = true)) return 20261019
+    val parts = clean.split("/")
+    if (parts.size == 3) {
+        val d = parts[0].toIntOrNull() ?: 18
+        val m = parts[1].toIntOrNull() ?: 10
+        val y = parts[2].toIntOrNull() ?: 2026
+        return y * 10000 + m * 100 + d
+    }
+    return 20261018
+}
+
 @Composable
 private fun CreateTripDialog(
     currentUserName: String = "",
@@ -2320,13 +2409,17 @@ private fun CreateTripDialog(
         }
     }
     var title by remember { mutableStateOf("") }
+    var multiDay by remember { mutableStateOf(false) }
     var startDate by remember { mutableStateOf("Today") }
-    var endDate by remember { mutableStateOf("Tomorrow") }
+    var endDate by remember { mutableStateOf("Today") }
+    var dateValidationHint by remember { mutableStateOf<String?>(null) }
+    var selectedRideType by remember { mutableStateOf(RideType.OPEN_TO_ALL) }
     var flagOffTime by remember { mutableStateOf("") }
     var reportTime by remember { mutableStateOf("") }
-    var multiDay by remember { mutableStateOf(false) }
     var selectedVehicle by remember { mutableStateOf("CAR") }
     var notes by remember { mutableStateOf("") }
+    var showAdvancedOptions by remember { mutableStateOf(false) }
+    var idCopiedFeedback by remember { mutableStateOf(false) }
     val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "You" } }
     var tripMembers by remember {
         mutableStateOf(
@@ -2352,31 +2445,56 @@ private fun CreateTripDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Create Real-Time Trip") },
+        title = {
+            Text(
+                "Create Real-Time Trip",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        },
         text = {
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.height(480.dp)
+                modifier = Modifier.height(410.dp)
             ) {
+                // 0. Non-wrapping LIVE TRIP ID / REALTIME ID banner with one-tap copy
                 item {
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = Color(0xFFF1F5F9),
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                PlatformShare.copyToClipboard(generatedTripId, "Live Trip ID")
+                                idCopiedFeedback = true
+                            }
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    "Live Trip Code (Share with friends to track)",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B),
+                                    text = if (idCopiedFeedback) "✓ Trip ID copied to clipboard" else "Live Trip Code (Tap to copy)",
+                                    fontSize = 10.sp,
+                                    color = if (idCopiedFeedback) Color(0xFF166534) else Color(0xFF64748B),
+                                    fontWeight = if (idCopiedFeedback) FontWeight.Bold else FontWeight.Medium,
                                     maxLines = 1,
+                                    softWrap = false,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
-                                Text(generatedTripId, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                                Text(
+                                    text = generatedTripId,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0F172A),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                             }
                             Spacer(Modifier.width(8.dp))
                             Surface(
@@ -2384,8 +2502,8 @@ private fun CreateTripDialog(
                                 shape = RoundedCornerShape(6.dp)
                             ) {
                                 Text(
-                                    text = "REALTIME ID",
-                                    fontSize = 11.sp,
+                                    text = "LIVE TRIP ID",
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF166534),
                                     maxLines = 1,
@@ -2396,6 +2514,96 @@ private fun CreateTripDialog(
                         }
                     }
                 }
+
+                // 1. Starting Location FIRST (Starting Location -> Destination -> Trip Name -> Dates)
+                item {
+                    Column {
+                        OutlinedTextField(
+                            value = source,
+                            onValueChange = {
+                                source = it
+                                sourceLat = 0.0
+                                sourceLng = 0.0
+                                scope.launch {
+                                    sourceSuggestions = PlaceSearchService.searchPlaces(it)
+                                }
+                            },
+                            label = { Text("Starting Location") },
+                            placeholder = { Text("Search start address, area or landmark") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            leadingIcon = {
+                                Icon(Icons.Filled.LocationOn, contentDescription = "Source", tint = Color(0xFF27AE60))
+                            }
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    isDetectingGps = true
+                                    scope.launch {
+                                        val fresh = PlatformLocation.fetchFreshLocation() ?: PlatformLocation.getCurrentLocation()
+                                        if (fresh != null && fresh.latitude != 0.0) {
+                                            sourceLat = fresh.latitude
+                                            sourceLng = fresh.longitude
+                                            source = LocationCoordinateResolver.exactAddressFor(fresh.latitude, fresh.longitude)
+                                        }
+                                        sourceSuggestions = emptyList()
+                                        isDetectingGps = false
+                                    }
+                                },
+                                enabled = !isDetectingGps,
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                            ) {
+                                if (isDetectingGps) {
+                                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = Blue)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Detecting pinpoint GPS location...", fontSize = 11.sp, color = Blue, fontWeight = FontWeight.SemiBold)
+                                } else {
+                                    Icon(Icons.Filled.MyLocation, null, modifier = Modifier.size(12.dp), tint = Blue)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Use Live / Current Location", fontSize = 11.sp, color = Blue, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                        if (sourceSuggestions.isNotEmpty()) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1))
+                            ) {
+                                Column(modifier = Modifier.padding(4.dp)) {
+                                    sourceSuggestions.forEach { suggestion ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    source = suggestion.name
+                                                    sourceLat = suggestion.latitude
+                                                    sourceLng = suggestion.longitude
+                                                    sourceSuggestions = emptyList()
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Filled.LocationOn, contentDescription = null, tint = Color(0xFF27AE60), modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Column {
+                                                Text(suggestion.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                Text(suggestion.description, fontSize = 10.sp, color = Color(0xFF64748B), maxLines = 1)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 2. Destination SECOND
                 item {
                     Column {
                         OutlinedTextField(
@@ -2412,7 +2620,7 @@ private fun CreateTripDialog(
                                 }
                             },
                             label = { Text("Destination") },
-                            placeholder = { Text("Search address, area or landmark") },
+                            placeholder = { Text("Search destination address or landmark") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             leadingIcon = {
@@ -2454,216 +2662,171 @@ private fun CreateTripDialog(
                         }
                     }
                 }
-                item {
-                    Column {
-                        OutlinedTextField(
-                            value = source,
-                            onValueChange = {
-                                source = it
-                                sourceLat = 0.0
-                                sourceLng = 0.0
-                                scope.launch {
-                                    sourceSuggestions = PlaceSearchService.searchPlaces(it)
-                                }
-                            },
-                            label = { Text("Starting Location") },
-                            placeholder = { Text("Search address, area or landmark") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            leadingIcon = {
-                                Icon(Icons.Filled.LocationOn, contentDescription = "Source", tint = Color(0xFF27AE60))
-                            }
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            TextButton(
-                                onClick = {
-                                    isDetectingGps = true
-                                    scope.launch {
-                                        val fresh = PlatformLocation.fetchFreshLocation() ?: PlatformLocation.getCurrentLocation()
-                                        if (fresh != null && fresh.latitude != 0.0) {
-                                            sourceLat = fresh.latitude
-                                            sourceLng = fresh.longitude
-                                            source = LocationCoordinateResolver.exactAddressFor(fresh.latitude, fresh.longitude)
-                                        }
-                                        sourceSuggestions = emptyList()
-                                        isDetectingGps = false
-                                    }
-                                },
-                                enabled = !isDetectingGps,
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
-                            ) {
-                                if (isDetectingGps) {
-                                    CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 1.5.dp, color = Blue)
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Detecting pinpoint GPS location...", fontSize = 11.sp, color = Blue, fontWeight = FontWeight.SemiBold)
-                                } else {
-                                    Icon(Icons.Filled.MyLocation, null, modifier = Modifier.size(13.dp), tint = Blue)
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Use Live / Current Location", fontSize = 11.sp, color = Blue, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-                        if (sourceSuggestions.isNotEmpty()) {
-                            Card(
-                                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1))
-                            ) {
-                                Column(modifier = Modifier.padding(4.dp)) {
-                                    sourceSuggestions.forEach { suggestion ->
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable {
-                                                    source = suggestion.name
-                                                    sourceLat = suggestion.latitude
-                                                    sourceLng = suggestion.longitude
-                                                    sourceSuggestions = emptyList()
-                                                }
-                                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(Icons.Filled.LocationOn, contentDescription = null, tint = Color(0xFF27AE60), modifier = Modifier.size(16.dp))
-                                            Spacer(Modifier.width(6.dp))
-                                            Column {
-                                                Text(suggestion.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                                Text(suggestion.description, fontSize = 10.sp, color = Color(0xFF64748B), maxLines = 1)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+
+                // 3. Trip Name THIRD
                 item {
                     OutlinedTextField(
                         value = title,
                         onValueChange = { title = it },
-                        label = { Text("Trip name") },
+                        label = { Text("Trip Name") },
+                        placeholder = { Text("e.g. Weekend Highway Ride") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
                 }
+
+                // 4. Multi Day Trip Switch + Validated Start & End Dates FOURTH
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PickerField("Start date", startDate, Modifier.weight(1f)) { picker = "start" }
-                        PickerField("End date", endDate, Modifier.weight(1f)) { picker = "end" }
-                    }
-                }
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Trip Members (${tripMembers.size})", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        Text("Dynamic", fontSize = 11.sp, color = Green, fontWeight = FontWeight.SemiBold)
-                    }
-                    Spacer(Modifier.height(4.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        tripMembers.forEachIndexed { idx, member ->
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                color = Soft,
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFFF8FAFC),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        modifier = Modifier.size(24.dp).clip(CircleShape).background(Color(member.color)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(member.name.take(1).uppercase(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                    Spacer(Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        if (idx == 0) "${member.name} (Organizer/You)" else member.name,
-                                        modifier = Modifier.weight(1f),
-                                        color = Navy,
-                                        fontWeight = FontWeight.Medium
+                                        text = "Multi Day Trip",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = Navy
                                     )
-                                    if (idx > 0) {
-                                        IconButton(
-                                            onClick = {
-                                                tripMembers = tripMembers.filterIndexed { i, _ -> i != idx }
-                                            },
-                                            modifier = Modifier.size(24.dp)
-                                        ) {
-                                            Icon(Icons.Default.Close, contentDescription = "Remove", tint = Red, modifier = Modifier.size(16.dp))
-                                        }
-                                    } else {
-                                        Text("Organizer", color = Green, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
+                                    Text(
+                                        text = if (multiDay) {
+                                            "Multi-day ON: Select different Start and End dates"
+                                        } else {
+                                            "Single-day trip (OFF): Start and End dates are the same day"
+                                        },
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF64748B)
+                                    )
                                 }
+                                androidx.compose.material3.Switch(
+                                    checked = multiDay,
+                                    onCheckedChange = { enabled ->
+                                        multiDay = enabled
+                                        dateValidationHint = null
+                                        if (!enabled) {
+                                            endDate = startDate
+                                        } else if (endDate == startDate) {
+                                            endDate = if (startDate == "Today") "Tomorrow" else startDate
+                                        }
+                                    }
+                                )
                             }
                         }
 
-                        // Input to add co-travelers dynamically
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            OutlinedTextField(
-                                value = newMemberInput,
-                                onValueChange = { newMemberInput = it },
-                                placeholder = { Text("Add co-traveler name", fontSize = 12.sp) },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true
-                            )
-                            Button(
-                                onClick = {
-                                    val cleanName = newMemberInput.trim()
-                                    if (cleanName.isNotBlank()) {
-                                        val colors = listOf(0xFF27AE60L, 0xFFF2994AL, 0xFF9B51E0L, 0xFFEB5757L)
-                                        val newMem = TripMember(
-                                            id = "usr-${cleanName.hashCode()}",
-                                            name = cleanName,
-                                            color = colors[tripMembers.size % colors.size],
-                                            isSharingLocation = true
-                                        )
-                                        tripMembers = tripMembers + newMem
-                                        newMemberInput = ""
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Blue),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PickerField("Start date", startDate, Modifier.weight(1f)) { picker = "start" }
+                            PickerField(
+                                label = if (multiDay) "End date" else "End date (Same day)",
+                                value = if (multiDay) endDate else startDate,
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Text("+ Add", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                if (multiDay) {
+                                    picker = "end"
+                                } else {
+                                    dateValidationHint = "Single-day trip: Enable 'Multi Day Trip' above to pick a different end date."
+                                }
+                            }
+                        }
+                        dateValidationHint?.let { hint ->
+                            Text(
+                                text = hint,
+                                fontSize = 11.sp,
+                                color = Blue,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                // 5. Ride Access Options (Consistent styling for Open To All, Request To Join, Invite Only)
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Trip Access Type", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Navy)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(
+                                RideType.OPEN_TO_ALL to "Open To All",
+                                RideType.REQUEST_TO_JOIN to "Request To Join",
+                                RideType.INVITE_ONLY to "Invite Only"
+                            ).forEach { (rType, rLabel) ->
+                                RideTypeButton(
+                                    text = rLabel,
+                                    selected = selectedRideType == rType,
+                                    onClick = { selectedRideType = rType },
+                                    modifier = Modifier.weight(1f)
+                                )
                             }
                         }
                     }
                 }
-                item {
-                    OutlinedTextField(
-                        value = vehicleDetails,
-                        onValueChange = { vehicleDetails = it },
-                        label = { Text("Vehicle (optional)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                }
+
+                // 6. Trip Cover Photo + 4 Equal-Sized Preset Cards (Mountain, Beach, Forest, Highway)
                 item {
                     LaunchedEffect(pendingCoverImageUri) {
                         if (!pendingCoverImageUri.isNullOrBlank()) coverImage = pendingCoverImageUri
                     }
                     Surface(
-                        modifier = Modifier.fillMaxWidth().clickable { onPickTripCoverImage?.invoke() },
-                        shape = RoundedCornerShape(14.dp), color = Soft
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPickTripCoverImage?.invoke() },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Soft,
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (coverImage.isNotBlank()) Green else Color(0xFFCBD5E1)
+                        )
                     ) {
-                        Column(Modifier.padding(14.dp)) {
-                            Text(if (coverImage.isBlank()) "Add trip cover photo" else "✓ Cover photo selected", fontWeight = FontWeight.SemiBold, color = Navy)
-                            Text(if (onPickTripCoverImage == null) "Select preset below or upload on Android." else "Choose an image or tap a preset below", fontSize = 12.sp, color = Color.Gray)
-                            if (coverImage.isNotBlank()) PlatformTripCoverImage(coverImage, Modifier.fillMaxWidth().height(120.dp).padding(top = 10.dp))
+                        Column(Modifier.padding(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = if (coverImage.isBlank()) "📷 Add trip cover photo" else "✓ Trip cover photo ready",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = Navy
+                                    )
+                                    Text(
+                                        text = "Tap to upload from gallery or choose a preset below",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                }
+                                if (coverImage.isNotBlank()) {
+                                    TextButton(
+                                        onClick = { coverImage = "" },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                                    ) {
+                                        Text("Remove", fontSize = 11.sp, color = Red)
+                                    }
+                                }
+                            }
+                            if (coverImage.isNotBlank()) {
+                                PlatformTripCoverImage(
+                                    uri = coverImage,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(96.dp)
+                                        .padding(top = 8.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.height(6.dp))
-                    Text("Or select scenic cover preset:", fontSize = 11.sp, color = Color.Gray)
+                    Text("Scenic cover presets:", fontSize = 11.sp, color = Color(0xFF64748B))
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -2674,50 +2837,43 @@ private fun CreateTripDialog(
                             "🌲 Forest" to "https://images.unsplash.com/photo-1448375240586-882707db888b?w=800&q=80",
                             "🛣️ Highway" to "https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?w=800&q=80"
                         ).forEach { (label, url) ->
+                            val isPresetSelected = coverImage == url
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = if (coverImage == url) Blue else Color(0xFFF1F5F9),
-                                modifier = Modifier.weight(1f).clickable { coverImage = url }
+                                color = if (isPresetSelected) Blue else Color(0xFFF1F5F9),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (isPresetSelected) Blue else Color(0xFFCBD5E1)
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp)
+                                    .clickable { coverImage = url }
                             ) {
-                                Text(
-                                    label,
-                                    color = if (coverImage == url) Color.White else Navy,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.padding(vertical = 8.dp),
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
+                                Box(
+                                    modifier = Modifier.fillMaxSize().padding(horizontal = 2.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        color = if (isPresetSelected) Color.White else Navy,
+                                        fontSize = 10.sp,
+                                        fontWeight = if (isPresetSelected) FontWeight.Bold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                }
                             }
                         }
                     }
                 }
+
+                // 7. Travel Mode
                 item {
-                    PickerField("Flag-off time", flagOffTime.ifBlank { "Select time" }, Modifier.fillMaxWidth()) { picker = "flag" }
-                }
-                item {
-                    PickerField("Report time", reportTime.ifBlank { "Select time" }, Modifier.fillMaxWidth()) { picker = "report" }
-                }
-                item {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) { Text("Trip reminder", fontWeight = FontWeight.SemiBold); Text("Alert at the report time", fontSize = 12.sp, color = Color.Gray) }
-                        androidx.compose.material3.Switch(reminderEnabled, { reminderEnabled = it })
-                    }
-                }
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Multi Day Trip", modifier = Modifier.weight(1f))
-                        androidx.compose.material3.Switch(
-                            checked = multiDay,
-                            onCheckedChange = { multiDay = it }
-                        )
-                    }
-                }
-                item {
-                    Text("Select Travel Mode", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Spacer(Modifier.height(6.dp))
+                    Text("Travel Mode", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Navy)
+                    Spacer(Modifier.height(4.dp))
                     val travelModes = listOf(
                         "CAR" to "🚗 Car",
                         "SUV" to "🚙 SUV",
@@ -2728,7 +2884,7 @@ private fun CreateTripDialog(
                         "TREK" to "🥾 Trek"
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        travelModes.chunked(3).forEach { rowItems ->
+                        travelModes.chunked(4).forEach { rowItems ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -2739,32 +2895,108 @@ private fun CreateTripDialog(
                                         shape = RoundedCornerShape(10.dp),
                                         color = if (isSelected) Blue else Color(0xFFF1F5F9),
                                         border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) Blue else Color(0xFFCBD5E1)),
-                                        modifier = Modifier.weight(1f).clickable { selectedVehicle = vType }
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(36.dp)
+                                            .clickable { selectedVehicle = vType }
                                     ) {
-                                        Text(
-                                            text = vLabel,
-                                            color = if (isSelected) Color.White else Navy,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            fontSize = 12.sp,
-                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                            modifier = Modifier.padding(vertical = 8.dp)
-                                        )
+                                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                            Text(
+                                                text = vLabel,
+                                                color = if (isSelected) Color.White else Navy,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                fontSize = 11.sp,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                        }
                                     }
                                 }
-                                repeat(3 - rowItems.size) {
+                                repeat(4 - rowItems.size) {
                                     Spacer(Modifier.weight(1f))
                                 }
                             }
                         }
                     }
                 }
+
+                // 8. Co-Travelers & Optional Schedule/Notes (Compact & Expandable to avoid tall crowded form)
                 item {
-                    OutlinedTextField(
-                        value = notes,
-                        onValueChange = { if (it.length <= 10000) notes = it },
-                        label = { Text("Ride Notes") },
-                        modifier = Modifier.fillMaxWidth().height(120.dp)
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Trip Members (${tripMembers.size})", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Navy)
+                        TextButton(
+                            onClick = { showAdvancedOptions = !showAdvancedOptions },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                        ) {
+                            Text(
+                                if (showAdvancedOptions) "Hide Extra Options ▲" else "Timings & Notes ▼",
+                                fontSize = 11.sp,
+                                color = Blue,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = newMemberInput,
+                            onValueChange = { newMemberInput = it },
+                            placeholder = { Text("Add co-traveler name", fontSize = 12.sp) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        Button(
+                            onClick = {
+                                val cleanName = newMemberInput.trim()
+                                if (cleanName.isNotBlank()) {
+                                    val colors = listOf(0xFF27AE60L, 0xFFF2994AL, 0xFF9B51E0L, 0xFFEB5757L)
+                                    val newMem = TripMember(
+                                        id = "usr-${cleanName.hashCode()}",
+                                        name = cleanName,
+                                        color = colors[tripMembers.size % colors.size],
+                                        isSharingLocation = true
+                                    )
+                                    tripMembers = tripMembers + newMem
+                                    newMemberInput = ""
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Blue),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Text("+ Add", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+                }
+
+                if (showAdvancedOptions) {
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                PickerField("Flag-off time", flagOffTime.ifBlank { "Select time" }, Modifier.weight(1f)) { picker = "flag" }
+                                PickerField("Report time", reportTime.ifBlank { "Select time" }, Modifier.weight(1f)) { picker = "report" }
+                            }
+                            OutlinedTextField(
+                                value = vehicleDetails,
+                                onValueChange = { vehicleDetails = it },
+                                label = { Text("Vehicle Registration / Model (optional)") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                            OutlinedTextField(
+                                value = notes,
+                                onValueChange = { if (it.length <= 10000) notes = it },
+                                label = { Text("Ride Notes (optional)") },
+                                modifier = Modifier.fillMaxWidth().height(84.dp)
+                            )
+                        }
+                    }
                 }
             }
         },
@@ -2772,6 +3004,7 @@ private fun CreateTripDialog(
             Button(
                 onClick = {
                     if (destination.isBlank() || title.isBlank()) return@Button
+                    val effectiveEndDate = if (multiDay) endDate else startDate
                     scope.launch {
                         val live = PlatformLocation.getCurrentLocation()
                         var finalSrcLat = sourceLat
@@ -2829,11 +3062,11 @@ private fun CreateTripDialog(
                                 source = resolvedSource,
                                 destination = destination,
                                 title = title,
-                                rideDate = "$startDate - $endDate",
+                                rideDate = if (multiDay) "$startDate - $effectiveEndDate" else startDate,
                                 flagOffTime = flagOffTime,
                                 reportTime = reportTime,
                                 multiDay = multiDay,
-                                rideType = RideType.OPEN_TO_ALL,
+                                rideType = selectedRideType,
                                 notes = notes,
                                 memberIds = initialMembers.map { it.id }.toSet(),
                                 dynamicMembers = initialMembers,
@@ -2849,18 +3082,49 @@ private fun CreateTripDialog(
                         )
                     }
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = Red)
+                colors = ButtonDefaults.buttonColors(containerColor = Blue)
             ) {
-                Text("Next")
+                Text("Create Trip", color = Color.White, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Back") }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
     when (picker) {
-        "start" -> CalendarPickerDialog(startDate, { startDate = it; picker = null }, { picker = null })
-        "end" -> CalendarPickerDialog(endDate, { endDate = it; picker = null }, { picker = null })
+        "start" -> CalendarPickerDialog(
+            initial = startDate,
+            onSelect = { picked ->
+                startDate = picked
+                if (!multiDay) {
+                    endDate = picked
+                    dateValidationHint = null
+                } else if (parseDateOrderKey(endDate) < parseDateOrderKey(picked)) {
+                    endDate = picked
+                    dateValidationHint = "End date updated to match Start date ($picked)."
+                } else {
+                    dateValidationHint = null
+                }
+                picker = null
+            },
+            onDismiss = { picker = null }
+        )
+        "end" -> CalendarPickerDialog(
+            initial = endDate,
+            onSelect = { picked ->
+                if (!multiDay) {
+                    endDate = startDate
+                } else if (parseDateOrderKey(picked) < parseDateOrderKey(startDate)) {
+                    endDate = startDate
+                    dateValidationHint = "End date cannot be earlier than Start date ($startDate)."
+                } else {
+                    endDate = picked
+                    dateValidationHint = null
+                }
+                picker = null
+            },
+            onDismiss = { picker = null }
+        )
         "flag" -> TimePickerDialog(flagOffTime, { flagOffTime = it; picker = null }, { picker = null })
         "report" -> TimePickerDialog(reportTime, { reportTime = it; picker = null }, { picker = null })
     }
@@ -2869,7 +3133,7 @@ private fun CreateTripDialog(
 @Composable
 private fun PickerField(label: String, value: String, modifier: Modifier, onClick: () -> Unit) {
     Surface(modifier = modifier.clickable(onClick = onClick), shape = RoundedCornerShape(10.dp), color = tbCardBg(), border = androidx.compose.foundation.BorderStroke(1.dp, tbCardBorder())) {
-        Column(Modifier.padding(12.dp)) { Text(label, fontSize = 11.sp, color = tbSubtextColor()); Text(value, color = tbTextColor(), fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+        Column(Modifier.padding(10.dp)) { Text(label, fontSize = 10.sp, color = tbSubtextColor(), maxLines = 1); Text(value, color = tbTextColor(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) }
     }
 }
 
@@ -2985,18 +3249,33 @@ private fun TimePickerDialog(initial: String, onSelect: (String) -> Unit, onDism
 private fun RideTypeButton(
     text: String,
     selected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        color = if (selected) Red else Color.Black,
+        modifier = modifier
+            .height(36.dp)
+            .clickable(onClick = onClick),
+        color = if (selected) Blue else Color(0xFFF1F5F9),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (selected) Blue else Color(0xFFCBD5E1)
+        ),
         shape = RoundedCornerShape(10.dp)
     ) {
         Box(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text(text, color = Color.White)
+            Text(
+                text = if (selected) "✓ $text" else text,
+                color = if (selected) Color.White else Navy,
+                fontSize = 10.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+                softWrap = false,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -3380,19 +3659,30 @@ private fun TrackingScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(modifier = Modifier.weight(1f, fill = false)) {
-                                    Text(
-                                        if (hasActiveTrip) "Active Trip ID / Tracking Code" else "No Active Trip",
-                                        color = tbSubtextColor(),
-                                        fontSize = 12.sp,
-                                        maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = Green.copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                text = if (hasActiveTrip) "LIVE TRIP ID" else "NO ACTIVE TRIP",
+                                                color = Green,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.height(4.dp))
                                     Text(
                                         if (hasActiveTrip) trackingCode else "Create or Join a Trip",
                                         color = tbTextColor(),
                                         fontSize = if (hasActiveTrip) 20.sp else 16.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1,
+                                        softWrap = false,
                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                 }
@@ -3412,7 +3702,7 @@ private fun TrackingScreen(
                                             Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                                 Text("💬", fontSize = 13.sp)
                                                 Spacer(Modifier.width(4.dp))
-                                                Text("Chat", color = Color(0xFF16A34A), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                Text("Chat", color = Color(0xFF16A34A), fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, softWrap = false)
                                             }
                                         }
                                         Surface(
@@ -3420,17 +3710,14 @@ private fun TrackingScreen(
                                             color = Blue.copy(alpha = 0.15f),
                                             modifier = Modifier.clickable {
                                                 clipboardManager.setText(AnnotatedString(trackingCode))
-                                                codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your travel buddy."
-                                                PlatformShare.shareText(
-                                                    text = "Join my live trip on Travel Buddy!\nTrip ID: $trackingCode\nTrack my live location in real-time.",
-                                                    title = "Share Trip ID"
-                                                )
+                                                PlatformShare.copyToClipboard(trackingCode, "Trip ID")
+                                                codeStatusMessage = "✓ Trip ID '$trackingCode' copied to clipboard!"
                                             }
                                         ) {
                                             Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(Icons.Filled.Share, "Share", tint = Blue, modifier = Modifier.size(15.dp))
+                                                Icon(Icons.Filled.VpnKey, "Copy ID", tint = Blue, modifier = Modifier.size(14.dp))
                                                 Spacer(Modifier.width(4.dp))
-                                                Text("Copy ID", color = Blue, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                Text("Copy ID", color = Blue, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, softWrap = false)
                                             }
                                         }
                                     }
