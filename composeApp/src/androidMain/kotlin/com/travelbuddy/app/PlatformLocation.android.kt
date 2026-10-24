@@ -17,7 +17,10 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -29,7 +32,11 @@ import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.round
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 actual object PlatformLocation {
     var appContext: Context? = null
@@ -40,9 +47,17 @@ actual object PlatformLocation {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var isTrackingStarted = false
 
+    // Asynchronous background worker scope (never blocks Android main thread / UI looper)
+    private val bgScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // In-memory address cache to eliminate redundant geocoding during continuous tracking
+    private var cachedAddress: String? = null
+    private var cachedAddressLat: Double = 0.0
+    private var cachedAddressLng: Double = 0.0
+    private val isGeocodingInProgress = AtomicBoolean(false)
+
     fun init(context: Context) {
         appContext = context.applicationContext
-        // Seed initial cached GPS location
         fetchCachedLocation()
         startContinuousTracking()
     }
@@ -54,13 +69,58 @@ actual object PlatformLocation {
         return fine || coarse
     }
 
+    private fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        if (lat1 == 0.0 || lon1 == 0.0 || lat2 == 0.0 || lon2 == 0.0) return Double.MAX_VALUE
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = sin(dLat / 2) * sin(dLat / 2) +
+                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+                sin(dLon / 2) * sin(dLon / 2)
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return 6371000.0 * c
+    }
+
+    private fun triggerAsyncGeocode(lat: Double, lng: Double) {
+        if (lat == 0.0 && lng == 0.0) return
+        if (isGeocodingInProgress.compareAndSet(false, true)) {
+            bgScope.launch {
+                try {
+                    val resolved = doBackgroundReverseGeocode(lat, lng)
+                    if (!resolved.isNullOrBlank()) {
+                        cachedAddress = resolved
+                        cachedAddressLat = lat
+                        cachedAddressLng = lng
+                        val current = lastLocation
+                        if (current != null) {
+                            val updated = current.copy(address = resolved)
+                            lastLocation = updated
+                            mainHandler.post {
+                                activeListeners.forEach { it(updated) }
+                            }
+                        }
+                    }
+                } finally {
+                    isGeocodingInProgress.set(false)
+                }
+            }
+        }
+    }
+
     /**
-     * Updates device location directly (e.g., from Google Maps' native blue-dot location changes).
+     * Updates device location directly (e.g. from Google Maps' native blue-dot location changes).
+     * 100% non-blocking: never blocks the UI thread.
      */
     fun updateManualLocation(latitude: Double, longitude: Double, speedKmh: Double = 0.0) {
         if (latitude == 0.0 && longitude == 0.0) return
-        val addr = reverseGeocode(latitude, longitude)
-            ?: "Pinpoint Location (${round(latitude * 10000.0) / 10000.0}, ${round(longitude * 10000.0) / 10000.0})"
+
+        val dist = haversineMeters(latitude, longitude, cachedAddressLat, cachedAddressLng)
+        val addr = if (dist < 150.0 && !cachedAddress.isNullOrBlank()) {
+            cachedAddress
+        } else {
+            triggerAsyncGeocode(latitude, longitude)
+            lastLocation?.address ?: "Pinpoint Location (${round(latitude * 10000.0) / 10000.0}, ${round(longitude * 10000.0) / 10000.0})"
+        }
+
         val realLoc = RealLocation(
             latitude = latitude,
             longitude = longitude,
@@ -112,7 +172,8 @@ actual object PlatformLocation {
      * Enterprise Swiggy / Amazon style instant high-accuracy location latch:
      * 1. Evaluates latest cached hardware and network fixes.
      * 2. Concurrently dispatches single-shot high-accuracy FusedLocationProviderClient + hardware GPS listener.
-     * 3. Latching timer (2500ms): resumes with the absolute freshest, most accurate fix available.
+     * 3. Latching timer (2000ms): resumes with the absolute freshest, most accurate fix available.
+     * Never blocks UI thread.
      */
     @SuppressLint("MissingPermission")
     actual suspend fun fetchFreshLocation(): RealLocation? = withContext(Dispatchers.IO) {
@@ -157,12 +218,12 @@ actual object PlatformLocation {
                 .filter { it.latitude != 0.0 }
                 .maxByOrNull { it.time }
 
-            // Latch timeout runnable (2500ms max wait)
+            // Latch timeout runnable (2000ms max wait)
             val timeoutRunnable = Runnable {
                 val chosen = recentCandidate?.let { toRealLocation(it) } ?: lastLocation
                 safeResume(chosen)
             }
-            mainHandler.postDelayed(timeoutRunnable, 2500L)
+            mainHandler.postDelayed(timeoutRunnable, 2000L)
 
             // 1. Google Play Services Fused Location Client (High Accuracy)
             fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
@@ -225,9 +286,9 @@ actual object PlatformLocation {
 
         try {
             val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
-            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1500L).apply {
-                setMinUpdateIntervalMillis(1000L)
-                setMinUpdateDistanceMeters(0f)
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L).apply {
+                setMinUpdateIntervalMillis(1500L)
+                setMinUpdateDistanceMeters(2f)
             }.build()
 
             val callback = object : LocationCallback() {
@@ -263,10 +324,7 @@ actual object PlatformLocation {
             activeListener = listener
 
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1500L, 0f, listener, Looper.getMainLooper())
-            }
-            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1500L, 0f, listener, Looper.getMainLooper())
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 2f, listener, Looper.getMainLooper())
             }
         } catch (_: Exception) {}
     }
@@ -274,7 +332,6 @@ actual object PlatformLocation {
     @SuppressLint("MissingPermission")
     actual fun startLocationUpdates(onUpdate: (RealLocation) -> Unit) {
         activeListeners.add(onUpdate)
-        // Immediate callback with last cached location if already known
         lastLocation?.let { onUpdate(it) }
         startContinuousTracking()
     }
@@ -289,7 +346,7 @@ actual object PlatformLocation {
         if (clean.isBlank()) return null
 
         // 1. Native Geocoder
-        val nativeResult = try {
+        return try {
             val future = CompletableFuture.supplyAsync {
                 try {
                     val geocoder = Geocoder(ctx, Locale.getDefault())
@@ -298,43 +355,30 @@ actual object PlatformLocation {
                     if (!matches.isNullOrEmpty()) {
                         val match = matches[0]
                         Pair(match.latitude, match.longitude)
-                    } else null
+                    } else {
+                        // HTTP fallback on background thread
+                        val encoded = URLEncoder.encode(clean, "UTF-8")
+                        val url = URL("https://nominatim.openstreetmap.org/search?q=$encoded&countrycodes=in&format=json&limit=1")
+                        val conn = url.openConnection() as HttpURLConnection
+                        conn.setRequestProperty("User-Agent", "TravelBuddy-App/1.0")
+                        conn.connectTimeout = 2000
+                        conn.readTimeout = 2000
+                        if (conn.responseCode == 200) {
+                            val text = conn.inputStream.bufferedReader().use { it.readText() }
+                            val latRegex = Regex(""""lat"\s*:\s*"([^"]+)"""")
+                            val lonRegex = Regex(""""lon"\s*:\s*"([^"]+)"""")
+                            val lat = latRegex.find(text)?.groupValues?.get(1)?.toDoubleOrNull()
+                            val lon = lonRegex.find(text)?.groupValues?.get(1)?.toDoubleOrNull()
+                            if (lat != null && lon != null) Pair(lat, lon) else null
+                        } else null
+                    }
                 } catch (_: Exception) {
                     null
                 }
             }
-            future.get(2500, TimeUnit.MILLISECONDS)
-        } catch (_: Exception) {
-            null
-        }
-
-        if (nativeResult != null && nativeResult.first != 0.0) return nativeResult
-
-        // 2. HTTP Geocoding Fallback (OSM Nominatim)
-        return try {
-            val future = CompletableFuture.supplyAsync {
-                try {
-                    val encoded = URLEncoder.encode(clean, "UTF-8")
-                    val url = URL("https://nominatim.openstreetmap.org/search?q=$encoded&countrycodes=in&format=json&limit=1")
-                    val conn = url.openConnection() as HttpURLConnection
-                    conn.setRequestProperty("User-Agent", "TravelBuddy-App/1.0")
-                    conn.connectTimeout = 2500
-                    conn.readTimeout = 2500
-                    if (conn.responseCode == 200) {
-                        val text = conn.inputStream.bufferedReader().use { it.readText() }
-                        val latRegex = Regex(""""lat"\s*:\s*"([^"]+)"""")
-                        val lonRegex = Regex(""""lon"\s*:\s*"([^"]+)"""")
-                        val latMatch = latRegex.find(text)
-                        val lonMatch = lonRegex.find(text)
-                        val lat = latMatch?.groupValues?.get(1)?.toDoubleOrNull()
-                        val lon = lonMatch?.groupValues?.get(1)?.toDoubleOrNull()
-                        if (lat != null && lon != null) Pair(lat, lon) else null
-                    } else null
-                } catch (_: Exception) {
-                    null
-                }
-            }
-            future.get(2500, TimeUnit.MILLISECONDS)
+            // If on main thread, do not block long (max 1000ms), background callers can wait up to 2500ms
+            val timeout = if (Looper.myLooper() == Looper.getMainLooper()) 1000L else 2500L
+            future.get(timeout, TimeUnit.MILLISECONDS)
         } catch (_: Exception) {
             null
         }
@@ -369,95 +413,105 @@ actual object PlatformLocation {
                     emptyList()
                 }
             }
-            future.get(3000, TimeUnit.MILLISECONDS)
+            val timeout = if (Looper.myLooper() == Looper.getMainLooper()) 1200L else 3000L
+            future.get(timeout, TimeUnit.MILLISECONDS)
         } catch (_: Exception) {
             emptyList()
         }
     }
 
+    /**
+     * Non-blocking reverse geocoding:
+     * - Returns cached address immediately if near the requested coordinates.
+     * - If called on main thread: NEVER blocks. Returns cached address or formatted coordinate, and triggers async resolution.
+     * - If called on background thread: executes geocoding.
+     */
     actual fun reverseGeocode(latitude: Double, longitude: Double): String? {
+        if (latitude == 0.0 && longitude == 0.0) return null
+
+        val dist = haversineMeters(latitude, longitude, cachedAddressLat, cachedAddressLng)
+        if (dist < 150.0 && !cachedAddress.isNullOrBlank()) {
+            return cachedAddress
+        }
+
+        // If called on main thread, do NOT block the UI looper!
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            triggerAsyncGeocode(latitude, longitude)
+            return cachedAddress ?: "Pinpoint Location (${round(latitude * 10000.0) / 10000.0}, ${round(longitude * 10000.0) / 10000.0})"
+        }
+
+        return doBackgroundReverseGeocode(latitude, longitude)
+    }
+
+    private fun doBackgroundReverseGeocode(latitude: Double, longitude: Double): String? {
         val ctx = appContext ?: return null
         if (latitude == 0.0 && longitude == 0.0) return null
 
         // 1. Native Geocoder
-        val nativeAddr = try {
-            val future = CompletableFuture.supplyAsync {
-                try {
-                    val geocoder = Geocoder(ctx, Locale.getDefault())
-                    @Suppress("DEPRECATION")
-                    val matches = geocoder.getFromLocation(latitude, longitude, 1)
-                    if (!matches.isNullOrEmpty()) {
-                        val addr = matches[0]
-                        val feature = addr.featureName
-                        val thoroughfare = addr.thoroughfare
-                        val subLocality = addr.subLocality
-                        val locality = addr.locality ?: addr.subAdminArea ?: addr.adminArea
-                        val fullAddress = addr.getAddressLine(0)
+        try {
+            val geocoder = Geocoder(ctx, Locale.getDefault())
+            @Suppress("DEPRECATION")
+            val matches = geocoder.getFromLocation(latitude, longitude, 1)
+            if (!matches.isNullOrEmpty()) {
+                val addr = matches[0]
+                val feature = addr.featureName
+                val thoroughfare = addr.thoroughfare
+                val subLocality = addr.subLocality
+                val locality = addr.locality ?: addr.subAdminArea ?: addr.adminArea
+                val fullAddress = addr.getAddressLine(0)
 
-                        val street = when {
-                            !thoroughfare.isNullOrBlank() && !subLocality.isNullOrBlank() && thoroughfare != subLocality -> "$thoroughfare, $subLocality"
-                            !thoroughfare.isNullOrBlank() -> thoroughfare
-                            !subLocality.isNullOrBlank() -> subLocality
-                            !feature.isNullOrBlank() && !feature.matches(Regex("""\d+""")) -> feature
-                            else -> null
-                        }
-
-                        when {
-                            street != null && !locality.isNullOrBlank() -> "$street, $locality"
-                            street != null -> street
-                            !fullAddress.isNullOrBlank() -> fullAddress.split(",").take(3).joinToString(",").trim()
-                            !locality.isNullOrBlank() -> locality
-                            else -> fullAddress
-                        }
-                    } else null
-                } catch (_: Exception) {
-                    null
+                val street = when {
+                    !thoroughfare.isNullOrBlank() && !subLocality.isNullOrBlank() && thoroughfare != subLocality -> "$thoroughfare, $subLocality"
+                    !thoroughfare.isNullOrBlank() -> thoroughfare
+                    !subLocality.isNullOrBlank() -> subLocality
+                    !feature.isNullOrBlank() && !feature.matches(Regex("""\d+""")) -> feature
+                    else -> null
                 }
-            }
-            future.get(2500, TimeUnit.MILLISECONDS)
-        } catch (_: Exception) {
-            null
-        }
 
-        if (!nativeAddr.isNullOrBlank()) return nativeAddr
+                val resolved = when {
+                    street != null && !locality.isNullOrBlank() -> "$street, $locality"
+                    street != null -> street
+                    !fullAddress.isNullOrBlank() -> fullAddress.split(",").take(3).joinToString(",").trim()
+                    !locality.isNullOrBlank() -> locality
+                    else -> fullAddress
+                }
+                if (!resolved.isNullOrBlank()) return resolved
+            }
+        } catch (_: Exception) {}
 
         // 2. HTTP Reverse Geocoding Fallback (OSM Nominatim)
-        val onlineAddr = try {
-            val future = CompletableFuture.supplyAsync {
-                try {
-                    val url = URL("https://nominatim.openstreetmap.org/reverse?lat=$latitude&lon=$longitude&format=json&accept-language=en")
-                    val conn = url.openConnection() as HttpURLConnection
-                    conn.setRequestProperty("User-Agent", "TravelBuddy-App/1.0")
-                    conn.connectTimeout = 2500
-                    conn.readTimeout = 2500
-                    if (conn.responseCode == 200) {
-                        val text = conn.inputStream.bufferedReader().use { it.readText() }
-                        val regex = Regex(""""display_name"\s*:\s*"([^"]+)"""")
-                        val match = regex.find(text)
-                        val full = match?.groupValues?.get(1)?.replace("\\", "")
-                        full?.split(",")?.take(3)?.joinToString(",")?.trim()
-                    } else null
-                } catch (_: Exception) {
-                    null
-                }
+        try {
+            val url = URL("https://nominatim.openstreetmap.org/reverse?lat=$latitude&lon=$longitude&format=json&accept-language=en")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", "TravelBuddy-App/1.0")
+            conn.connectTimeout = 2000
+            conn.readTimeout = 2000
+            if (conn.responseCode == 200) {
+                val text = conn.inputStream.bufferedReader().use { it.readText() }
+                val regex = Regex(""""display_name"\s*:\s*"([^"]+)"""")
+                val match = regex.find(text)
+                val full = match?.groupValues?.get(1)?.replace("\\", "")
+                val formatted = full?.split(",")?.take(3)?.joinToString(",")?.trim()
+                if (!formatted.isNullOrBlank()) return formatted
             }
-            future.get(2500, TimeUnit.MILLISECONDS)
-        } catch (_: Exception) {
-            null
-        }
+        } catch (_: Exception) {}
 
-        if (!onlineAddr.isNullOrBlank()) return onlineAddr
-
-        // 3. Exact Pinpoint Coordinate fallback (Never hardcoded city names!)
-        val latStr = (round(latitude * 10000.0) / 10000.0).toString()
-        val lngStr = (round(longitude * 10000.0) / 10000.0).toString()
-        return "Pinpoint Location ($latStr, $lngStr)"
+        return "Pinpoint Location (${round(latitude * 10000.0) / 10000.0}, ${round(longitude * 10000.0) / 10000.0})"
     }
 
+    /**
+     * Converts Location to RealLocation in 0ms (non-blocking).
+     */
     private fun toRealLocation(loc: Location): RealLocation {
         val speedKmh = if (loc.hasSpeed()) (loc.speed * 3.6) else 0.0
-        val address = reverseGeocode(loc.latitude, loc.longitude)
-            ?: "Pinpoint Location (${round(loc.latitude * 10000.0) / 10000.0}, ${round(loc.longitude * 10000.0) / 10000.0})"
+        val dist = haversineMeters(loc.latitude, loc.longitude, cachedAddressLat, cachedAddressLng)
+        val address = if (dist < 150.0 && !cachedAddress.isNullOrBlank()) {
+            cachedAddress
+        } else {
+            triggerAsyncGeocode(loc.latitude, loc.longitude)
+            lastLocation?.address ?: "Pinpoint Location (${round(loc.latitude * 10000.0) / 10000.0}, ${round(loc.longitude * 10000.0) / 10000.0})"
+        }
+
         return RealLocation(
             latitude = loc.latitude,
             longitude = loc.longitude,

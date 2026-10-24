@@ -423,8 +423,8 @@ internal fun TravelBuddyMain(
                             onSelect = { trip ->
                                 activeTrip = trip
                                 activeTripCover = trip.coverImage ?: tripCovers[trip.id]
-                                members = trip.members
-                                apiMessage = "${trip.members.count { it.isSharingLocation }}/${trip.members.size} members online"
+                                members = deduplicateTripMembers(trip.members, currentUserName, trip.createdBy)
+                                apiMessage = "Switched to '${trip.name}' • Live tracking active"
                                 selectedTab = AppTab.Track
                             },
                             onDelete = { trip ->
@@ -1546,7 +1546,7 @@ private fun TripsScreen(
             it.tripCode.trim().lowercase() !in deleted &&
             !it.id.equals("trip-coorg-expedition", ignoreCase = true) &&
             !it.tripCode.equals("TRIP-7489", ignoreCase = true)
-        }
+        }.distinctBy { it.id }
     }
 
     LazyColumn(
@@ -1623,8 +1623,8 @@ private fun TripsScreen(
                 InfoCard("No active trips", "Create a trip or join using a Trip ID to start live tracking, directions, and shared expense splitting.", Orange)
             }
         } else {
-            items(visibleTrips) { trip ->
-                val isSelected = trip.id == activeTrip?.id
+            items(visibleTrips, key = { it.id }) { trip ->
+                val isSelected = trip.id == activeTrip?.id || (trip.tripCode.isNotBlank() && trip.tripCode == activeTrip?.tripCode)
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1905,7 +1905,7 @@ private fun TripsScreen(
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                text = if (isSelected) "Active Tracking • Open Live Map" else "Track This Trip Live",
+                                text = if (isSelected) "Active Tracking • Open Live Map" else "Select & Track This Trip",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp
                             )
