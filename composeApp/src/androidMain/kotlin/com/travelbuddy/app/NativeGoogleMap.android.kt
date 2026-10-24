@@ -34,6 +34,11 @@ import com.google.android.gms.maps.model.*
 import com.travelbuddy.app.domain.TripMember
 import kotlin.math.*
 
+// In-memory hardware bitmap caches to eliminate GC pauses and memory thrashing during zoom gestures
+private val travelerBadgeCache = mutableMapOf<String, BitmapDescriptor>()
+private val distanceLabelCache = mutableMapOf<String, BitmapDescriptor>()
+private val calloutMarkerCache = mutableMapOf<String, BitmapDescriptor>()
+
 @SuppressLint("MissingPermission")
 @Composable
 actual fun NativeGoogleMapView(
@@ -53,6 +58,10 @@ actual fun NativeGoogleMapView(
 
     var googleMapInstance by remember { mutableStateOf<GoogleMap?>(null) }
     var currentMapType by remember { mutableStateOf(GoogleMap.MAP_TYPE_NORMAL) }
+    var hasInitialCameraFitted by remember { mutableStateOf(false) }
+    var userManuallyInteracted by remember { mutableStateOf(false) }
+    var lastRouteKey by remember { mutableStateOf("") }
+    var lastRenderKey by remember { mutableStateOf("") }
 
     val mapView = remember {
         MapView(context).apply {
@@ -89,7 +98,19 @@ actual fun NativeGoogleMapView(
                         map.uiSettings.isZoomControlsEnabled = false // using custom floating controls
                         map.uiSettings.isCompassEnabled = true
                         map.uiSettings.isMyLocationButtonEnabled = false
+                        map.uiSettings.isScrollGesturesEnabled = true
+                        map.uiSettings.isZoomGesturesEnabled = true
+                        map.uiSettings.isTiltGesturesEnabled = false
+                        map.uiSettings.isRotateGesturesEnabled = true
+                        map.uiSettings.isScrollGesturesEnabledDuringRotateOrZoom = true
                         map.mapType = currentMapType
+
+                        // Detect user gestures so background telemetry/GPS updates NEVER interrupt manual zoom/pan
+                        map.setOnCameraMoveStartedListener { reason ->
+                            if (reason == GoogleMap.OnCameraMoveStartedListener.REASON_GESTURE) {
+                                userManuallyInteracted = true
+                            }
+                        }
 
                         val fineLocGranted = ContextCompat.checkSelfPermission(
                             context,
@@ -115,6 +136,11 @@ actual fun NativeGoogleMapView(
                             } catch (_: SecurityException) {}
                         }
 
+                        val currentRouteKey = "$sourceLat,$sourceLng,$destinationLat,$destinationLng"
+                        lastRouteKey = currentRouteKey
+                        lastRenderKey = "$currentRouteKey,$currentUserLat,$currentUserLng," +
+                            members.joinToString(";") { "${it.id}:${it.latitude}:${it.longitude}" }
+
                         renderGoogleMapContent(
                             context = context,
                             map = map,
@@ -126,27 +152,51 @@ actual fun NativeGoogleMapView(
                             dstLng = destinationLng,
                             currLat = currentUserLat,
                             currLng = currentUserLng,
-                            members = members
+                            members = members,
+                            shouldAnimateCamera = true
                         )
+                        hasInitialCameraFitted = true
                     }
                 }
             },
             update = {
                 googleMapInstance?.let { map ->
-                    map.mapType = currentMapType
-                    renderGoogleMapContent(
-                        context = context,
-                        map = map,
-                        srcName = sourceName,
-                        srcLat = sourceLat,
-                        srcLng = sourceLng,
-                        dstName = destinationName,
-                        dstLat = destinationLat,
-                        dstLng = destinationLng,
-                        currLat = currentUserLat,
-                        currLng = currentUserLng,
-                        members = members
-                    )
+                    if (map.mapType != currentMapType) {
+                        map.mapType = currentMapType
+                    }
+
+                    val currentRouteKey = "$sourceLat,$sourceLng,$destinationLat,$destinationLng"
+                    val routeChanged = (currentRouteKey != lastRouteKey)
+                    if (routeChanged) {
+                        lastRouteKey = currentRouteKey
+                        userManuallyInteracted = false
+                    }
+
+                    // Only animate camera on first load or when route has completely changed; never interrupt zoom
+                    val shouldAnimate = !hasInitialCameraFitted || (!userManuallyInteracted && routeChanged)
+
+                    val currentRenderKey = "$currentRouteKey,$currentUserLat,$currentUserLng," +
+                        members.joinToString(";") { "${it.id}:${it.latitude}:${it.longitude}" }
+
+                    // Only re-render markers if positions or route actually changed, preventing stutter during zoom
+                    if (currentRenderKey != lastRenderKey || shouldAnimate) {
+                        lastRenderKey = currentRenderKey
+                        renderGoogleMapContent(
+                            context = context,
+                            map = map,
+                            srcName = sourceName,
+                            srcLat = sourceLat,
+                            srcLng = sourceLng,
+                            dstName = destinationName,
+                            dstLat = destinationLat,
+                            dstLng = destinationLng,
+                            currLat = currentUserLat,
+                            currLng = currentUserLng,
+                            members = members,
+                            shouldAnimateCamera = shouldAnimate
+                        )
+                        hasInitialCameraFitted = true
+                    }
                 }
             },
             modifier = Modifier.fillMaxSize()
@@ -169,6 +219,7 @@ actual fun NativeGoogleMapView(
             ) {
                 IconButton(
                     onClick = {
+                        userManuallyInteracted = false
                         googleMapInstance?.let { map ->
                             val live = PlatformLocation.getCurrentLocation()
                             val myLoc = try { map.myLocation } catch (_: Exception) { null }
@@ -185,7 +236,7 @@ actual fun NativeGoogleMapView(
                                 else -> 0.0
                             }
                             if (targetLat != 0.0 && targetLng != 0.0) {
-                                map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(targetLat, targetLng), 16f))
+                                map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(targetLat, targetLng), 16.5f), 350, null)
                             }
                         }
                     }
@@ -226,7 +277,7 @@ actual fun NativeGoogleMapView(
                 }
             }
 
-            // Zoom In (+)
+            // Zoom In (+) with smooth 200ms animation
             Surface(
                 modifier = Modifier.size(42.dp),
                 shape = CircleShape,
@@ -235,7 +286,8 @@ actual fun NativeGoogleMapView(
             ) {
                 IconButton(
                     onClick = {
-                        googleMapInstance?.animateCamera(CameraUpdateFactory.zoomIn())
+                        userManuallyInteracted = true
+                        googleMapInstance?.animateCamera(CameraUpdateFactory.zoomIn(), 200, null)
                     }
                 ) {
                     Icon(
@@ -247,7 +299,7 @@ actual fun NativeGoogleMapView(
                 }
             }
 
-            // Zoom Out (-)
+            // Zoom Out (-) with smooth 200ms animation
             Surface(
                 modifier = Modifier.size(42.dp),
                 shape = CircleShape,
@@ -256,7 +308,8 @@ actual fun NativeGoogleMapView(
             ) {
                 IconButton(
                     onClick = {
-                        googleMapInstance?.animateCamera(CameraUpdateFactory.zoomOut())
+                        userManuallyInteracted = true
+                        googleMapInstance?.animateCamera(CameraUpdateFactory.zoomOut(), 200, null)
                     }
                 ) {
                     Icon(
@@ -290,7 +343,8 @@ private fun renderGoogleMapContent(
     dstLng: Double,
     currLat: Double,
     currLng: Double,
-    members: List<TripMember>
+    members: List<TripMember>,
+    shouldAnimateCamera: Boolean = true
 ) {
     map.clear()
     val density = context.resources.displayMetrics.density
@@ -486,19 +540,22 @@ private fun renderGoogleMapContent(
         }
     }
 
-    // Animate camera to include all markers (travelers & destination), fitting both into viewport
-    try {
-        if (hasPoints) {
-            val bounds = boundsBuilder.build()
-            val padding = (95 * density).toInt()
-            map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, padding))
-        } else {
+    // Only animate camera when explicitly requested (initial fit or route change).
+    // NEVER interrupt the camera while the user is zooming or panning!
+    if (shouldAnimateCamera) {
+        try {
+            if (hasPoints) {
+                val bounds = boundsBuilder.build()
+                val padding = (95 * density).toInt()
+                map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, padding), 400, null)
+            } else {
+                val center = if (effectiveUserLat != 0.0 && effectiveUserLng != 0.0) LatLng(effectiveUserLat, effectiveUserLng) else actualSrcLatLng
+                map.animateCamera(CameraUpdateFactory.newLatLngZoom(center, 15f), 400, null)
+            }
+        } catch (_: Exception) {
             val center = if (effectiveUserLat != 0.0 && effectiveUserLng != 0.0) LatLng(effectiveUserLat, effectiveUserLng) else actualSrcLatLng
-            map.animateCamera(CameraUpdateFactory.newLatLngZoom(center, 15f))
+            map.animateCamera(CameraUpdateFactory.newLatLngZoom(center, 14f), 400, null)
         }
-    } catch (_: Exception) {
-        val center = if (effectiveUserLat != 0.0 && effectiveUserLng != 0.0) LatLng(effectiveUserLat, effectiveUserLng) else actualSrcLatLng
-        map.animateCamera(CameraUpdateFactory.newLatLngZoom(center, 14f))
     }
 }
 
@@ -515,6 +572,9 @@ private fun createTravelerBadgeBitmap(
     vehicleType: String,
     density: Float
 ): BitmapDescriptor {
+    val cacheKey = "${name}_${isYou}_${colorHex}_${vehicleType}_${density}"
+    travelerBadgeCache[cacheKey]?.let { return it }
+
     val displayName = if (isYou) "$name (You)" else name
 
     val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -600,7 +660,9 @@ private fun createTravelerBadgeBitmap(
     canvas.drawCircle(centerX, 67f * density, 4.5f * density, dotPaint)
     canvas.drawCircle(centerX, 67f * density, 2f * density, whitePaint)
 
-    return BitmapDescriptorFactory.fromBitmap(bitmap)
+    val desc = BitmapDescriptorFactory.fromBitmap(bitmap)
+    travelerBadgeCache[cacheKey] = desc
+    return desc
 }
 
 /**
@@ -610,6 +672,9 @@ private fun createTravelerBadgeBitmap(
  */
 private fun createDistanceLabelBitmap(distanceKm: Double, density: Float): BitmapDescriptor {
     val text = formatDistance(distanceKm)
+    val cacheKey = "${text}_${density}"
+    distanceLabelCache[cacheKey]?.let { return it }
+
     val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.BLACK
         textSize = 11f * density
@@ -641,7 +706,9 @@ private fun createDistanceLabelBitmap(distanceKm: Double, density: Float): Bitma
     canvas.drawRoundRect(rect, 8f * density, 8f * density, borderPaint)
 
     canvas.drawText(text, width / 2f, height / 2f + 4f * density, textPaint)
-    return BitmapDescriptorFactory.fromBitmap(bitmap)
+    val desc = BitmapDescriptorFactory.fromBitmap(bitmap)
+    distanceLabelCache[cacheKey] = desc
+    return desc
 }
 
 /**
@@ -655,6 +722,9 @@ private fun createCalloutMarkerBitmap(
     isStart: Boolean,
     density: Float
 ): BitmapDescriptor {
+    val cacheKey = "${title}_${subtitle}_${isStart}_${density}"
+    calloutMarkerCache[cacheKey]?.let { return it }
+
     val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.BLACK
         textSize = 12f * density
@@ -707,7 +777,9 @@ private fun createCalloutMarkerBitmap(
     canvas.drawCircle(centerX, 48f * density, 7f * density, pinPaint)
     canvas.drawCircle(centerX, 48f * density, 3.2f * density, whitePaint)
 
-    return BitmapDescriptorFactory.fromBitmap(bitmap)
+    val desc = BitmapDescriptorFactory.fromBitmap(bitmap)
+    calloutMarkerCache[cacheKey] = desc
+    return desc
 }
 
 /**
