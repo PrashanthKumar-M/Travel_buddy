@@ -80,10 +80,10 @@ fun formatEta(km: Double, speedKmh: Double = 40.0): String {
 @Composable
 fun LiveGoogleMapView(
     sourceName: String = "Starting Point",
-    sourceLat: Double = 12.9716,
-    sourceLng: Double = 77.5946,
-    currentUserLat: Double = 12.9716,
-    currentUserLng: Double = 77.5946,
+    sourceLat: Double = 0.0,
+    sourceLng: Double = 0.0,
+    currentUserLat: Double = 0.0,
+    currentUserLng: Double = 0.0,
     members: List<TripMember> = emptyList(),
     vehicle: Vehicle? = null,
     vehicleType: String = "CAR",
@@ -110,12 +110,36 @@ fun LiveGoogleMapView(
         }
     }
 
-    val activeUserLat = realLocationState.value?.latitude ?: currentUserLat
-    val activeUserLng = realLocationState.value?.longitude ?: currentUserLng
+    val activeUserLat = when {
+        currentUserLat != 0.0 && currentUserLat != 12.9716 -> currentUserLat
+        realLocationState.value != null && realLocationState.value!!.latitude != 0.0 && realLocationState.value!!.latitude != 12.9716 -> realLocationState.value!!.latitude
+        PlatformLocation.getCurrentLocation() != null && PlatformLocation.getCurrentLocation()!!.latitude != 0.0 && PlatformLocation.getCurrentLocation()!!.latitude != 12.9716 -> PlatformLocation.getCurrentLocation()!!.latitude
+        currentUserLat != 0.0 -> currentUserLat
+        realLocationState.value != null -> realLocationState.value!!.latitude
+        else -> 0.0
+    }
+    val activeUserLng = when {
+        currentUserLng != 0.0 && currentUserLng != 77.5946 -> currentUserLng
+        realLocationState.value != null && realLocationState.value!!.longitude != 0.0 && realLocationState.value!!.longitude != 77.5946 -> realLocationState.value!!.longitude
+        PlatformLocation.getCurrentLocation() != null && PlatformLocation.getCurrentLocation()!!.longitude != 0.0 && PlatformLocation.getCurrentLocation()!!.longitude != 77.5946 -> PlatformLocation.getCurrentLocation()!!.longitude
+        currentUserLng != 0.0 -> currentUserLng
+        realLocationState.value != null -> realLocationState.value!!.longitude
+        else -> 0.0
+    }
 
     // Coordinate resolution
-    val (resolvedSrcLat, resolvedSrcLng) = remember(sourceName, sourceLat, sourceLng, activeUserLat) {
-        LocationCoordinateResolver.resolveCoordinates(sourceName, activeUserLat, activeUserLng)
+    val (resolvedSrcLat, resolvedSrcLng) = remember(sourceName, sourceLat, sourceLng, activeUserLat, activeUserLng) {
+        if (sourceLat != 0.0 && sourceLng != 0.0 && sourceLat != 12.9716) {
+            Pair(sourceLat, sourceLng)
+        } else if (sourceName.isBlank() || sourceName == "Starting Point" || sourceName.contains("12.9716")) {
+            if (activeUserLat != 0.0 && activeUserLng != 0.0) {
+                Pair(activeUserLat, activeUserLng)
+            } else {
+                LocationCoordinateResolver.resolveCoordinates(sourceName)
+            }
+        } else {
+            LocationCoordinateResolver.resolveCoordinates(sourceName, activeUserLat, activeUserLng)
+        }
     }
 
     val hasValidDestination = remember(destinationName) {

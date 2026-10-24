@@ -85,7 +85,7 @@ actual fun NativeGoogleMapView(
                     getMapAsync { map ->
                         googleMapInstance = map
                         val density = context.resources.displayMetrics.density
-                        map.setPadding(0, (68 * density).toInt(), 0, (15 * density).toInt())
+                        map.setPadding(0, (95 * density).toInt(), 0, (20 * density).toInt())
                         map.uiSettings.isZoomControlsEnabled = false // using custom floating controls
                         map.uiSettings.isCompassEnabled = true
                         map.uiSettings.isMyLocationButtonEnabled = false
@@ -103,6 +103,15 @@ actual fun NativeGoogleMapView(
                         if (fineLocGranted || coarseLocGranted) {
                             try {
                                 map.isMyLocationEnabled = true
+                                map.setOnMyLocationChangeListener { myLoc ->
+                                    if (myLoc != null && myLoc.latitude != 0.0) {
+                                        PlatformLocation.updateManualLocation(
+                                            myLoc.latitude,
+                                            myLoc.longitude,
+                                            if (myLoc.hasSpeed()) (myLoc.speed * 3.6) else 0.0
+                                        )
+                                    }
+                                }
                             } catch (_: SecurityException) {}
                         }
 
@@ -161,8 +170,23 @@ actual fun NativeGoogleMapView(
                 IconButton(
                     onClick = {
                         googleMapInstance?.let { map ->
-                            val target = LatLng(currentUserLat, currentUserLng)
-                            map.animateCamera(CameraUpdateFactory.newLatLngZoom(target, 14f))
+                            val live = PlatformLocation.getCurrentLocation()
+                            val myLoc = try { map.myLocation } catch (_: Exception) { null }
+                            val targetLat = when {
+                                currentUserLat != 0.0 && currentUserLat != 12.9716 -> currentUserLat
+                                live != null && live.latitude != 0.0 && live.latitude != 12.9716 -> live.latitude
+                                myLoc != null && myLoc.latitude != 0.0 -> myLoc.latitude
+                                currentUserLat != 0.0 -> currentUserLat
+                                else -> 12.9716
+                            }
+                            val targetLng = when {
+                                currentUserLng != 0.0 && currentUserLng != 77.5946 -> currentUserLng
+                                live != null && live.longitude != 0.0 && live.longitude != 77.5946 -> live.longitude
+                                myLoc != null && myLoc.longitude != 0.0 -> myLoc.longitude
+                                currentUserLng != 0.0 -> currentUserLng
+                                else -> 77.5946
+                            }
+                            map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(targetLat, targetLng), 16f))
                         }
                     }
                 ) {
@@ -302,7 +326,48 @@ private fun renderGoogleMapContent(
     val boundsBuilder = LatLngBounds.Builder()
     var hasPoints = false
 
-    val srcLatLng = LatLng(srcLat, srcLng)
+    // 1. Determine authentic live GPS location of this device
+    val liveLoc = PlatformLocation.getCurrentLocation()
+    val mapLoc = try { map.myLocation } catch (_: Exception) { null }
+
+    val effectiveUserLat = when {
+        currLat != 0.0 && currLat != 12.9716 -> currLat
+        liveLoc != null && liveLoc.latitude != 0.0 && liveLoc.latitude != 12.9716 -> liveLoc.latitude
+        mapLoc != null && mapLoc.latitude != 0.0 && mapLoc.latitude != 12.9716 -> mapLoc.latitude
+        currLat != 0.0 -> currLat
+        liveLoc != null && liveLoc.latitude != 0.0 -> liveLoc.latitude
+        mapLoc != null && mapLoc.latitude != 0.0 -> mapLoc.latitude
+        else -> srcLat
+    }
+
+    val effectiveUserLng = when {
+        currLng != 0.0 && currLng != 77.5946 -> currLng
+        liveLoc != null && liveLoc.longitude != 0.0 && liveLoc.longitude != 77.5946 -> liveLoc.longitude
+        mapLoc != null && mapLoc.longitude != 0.0 && mapLoc.longitude != 77.5946 -> mapLoc.longitude
+        currLng != 0.0 -> currLng
+        liveLoc != null && liveLoc.longitude != 0.0 -> liveLoc.longitude
+        mapLoc != null && mapLoc.longitude != 0.0 -> mapLoc.longitude
+        else -> srcLng
+    }
+
+    // 2. Determine authentic starting coordinates
+    val effectiveSrcLat = if (srcLat == 12.9716 && srcLng == 77.5946 && effectiveUserLat != 0.0 && effectiveUserLat != 12.9716) {
+        effectiveUserLat
+    } else if (srcLat != 0.0) {
+        srcLat
+    } else {
+        effectiveUserLat
+    }
+
+    val effectiveSrcLng = if (srcLat == 12.9716 && srcLng == 77.5946 && effectiveUserLng != 0.0 && effectiveUserLng != 77.5946) {
+        effectiveUserLng
+    } else if (srcLng != 0.0) {
+        srcLng
+    } else {
+        effectiveUserLng
+    }
+
+    val actualSrcLatLng = LatLng(effectiveSrcLat, effectiveSrcLng)
     val dstLatLng = LatLng(dstLat, dstLng)
 
     val hasValidDestination = dstName.isNotBlank() &&
@@ -310,18 +375,31 @@ private fun renderGoogleMapContent(
         !dstName.equals("Trip Destination", ignoreCase = true) &&
         !dstName.equals("Coorg Valley", ignoreCase = true) &&
         (dstLat != 0.0 || dstLng != 0.0) &&
-        (srcLat != dstLat || srcLng != dstLng)
+        (effectiveSrcLat != dstLat || effectiveSrcLng != dstLng)
 
-    // 1. Start Callout Marker (Bengaluru Start from Image 2)
-    val startCity = srcName.split(",").firstOrNull()?.trim() ?: "Start"
-    map.addMarker(
-        MarkerOptions()
-            .position(srcLatLng)
-            .icon(createCalloutMarkerBitmap(startCity, "Start", isStart = true, density = density))
-            .anchor(0.5f, 0.9f)
-    )
-    boundsBuilder.include(srcLatLng)
-    hasPoints = true
+    // Resolved city names without raw decimals:
+    val resolvedStartName = if (srcName.isBlank() || srcName.equals("Starting Point", ignoreCase = true) || srcName.matches(Regex(""".*\d+\.\d+.*"""))) {
+        LocationCoordinateResolver.resolveNearestCityOrArea(effectiveSrcLat, effectiveSrcLng)
+    } else {
+        srcName
+    }
+    val startCity = resolvedStartName.split(",").firstOrNull()?.trim() ?: "Start"
+
+    // Deduplicate members so each user appears once
+    val cleanMembers = deduplicateMemberList(members)
+
+    // 1. Start Callout Marker - only show if user has moved away from start (> 300m) or no members
+    val distUserToStartKm = haversineDistanceKm(effectiveUserLat, effectiveUserLng, effectiveSrcLat, effectiveSrcLng)
+    if (distUserToStartKm > 0.3 || cleanMembers.isEmpty()) {
+        map.addMarker(
+            MarkerOptions()
+                .position(actualSrcLatLng)
+                .icon(createCalloutMarkerBitmap(startCity, "Start", isStart = true, density = density))
+                .anchor(0.5f, 0.9f)
+        )
+        boundsBuilder.include(actualSrcLatLng)
+        hasPoints = true
+    }
 
     if (hasValidDestination) {
         // 2. Destination Callout Marker (from Image 2)
@@ -333,11 +411,17 @@ private fun renderGoogleMapContent(
                 .anchor(0.5f, 0.9f)
         )
         boundsBuilder.include(dstLatLng)
+        hasPoints = true
 
-        // 3. Main Route Polyline (Thick vibrant blue from Image 2)
+        // 3. Main Route Polyline: from user's live position (or start) to destination
+        val routeOrigin = if (effectiveUserLat != 0.0 && effectiveUserLng != 0.0) {
+            LatLng(effectiveUserLat, effectiveUserLng)
+        } else {
+            actualSrcLatLng
+        }
         map.addPolyline(
             PolylineOptions()
-                .add(srcLatLng, dstLatLng)
+                .add(routeOrigin, dstLatLng)
                 .width(12f)
                 .color(android.graphics.Color.parseColor("#1A73E8"))
                 .geodesic(true)
@@ -354,9 +438,6 @@ private fun renderGoogleMapContent(
         "#7CB342"  // Green for User 6
     )
 
-    // Deduplicate members so each user appears once
-    val cleanMembers = deduplicateMemberList(members)
-
     // Calculate real positions using authentic device and server GPS
     val travelerPositions = mutableListOf<Pair<TripMember, LatLng>>()
 
@@ -369,11 +450,15 @@ private fun renderGoogleMapContent(
         val isYou = (mySessionName.isNotBlank() && (memberName == mySessionName || memberName.contains(mySessionName) || mySessionName.contains(memberName))) || (index == 0 && mySessionName.isBlank())
 
         // Authentic GPS positioning:
-        val latLng: LatLng? = if (isYou && currLat != 0.0 && currLng != 0.0) {
-            LatLng(currLat, currLng)
+        val latLng: LatLng? = if (isYou) {
+            if (effectiveUserLat != 0.0 && effectiveUserLng != 0.0) {
+                LatLng(effectiveUserLat, effectiveUserLng)
+            } else if (rawLat != null && rawLng != null && rawLat != 0.0 && rawLng != 0.0) {
+                LatLng(rawLat, rawLng)
+            } else {
+                null
+            }
         } else if (rawLat != null && rawLng != null && rawLat != 0.0 && rawLng != 0.0) {
-            LatLng(rawLat, rawLng)
-        } else if (isYou && rawLat != null && rawLng != null && rawLat != 0.0 && rawLng != 0.0) {
             LatLng(rawLat, rawLng)
         } else {
             // Do NOT place remote co-travelers into Bengaluru or at fake offsets:
@@ -384,6 +469,7 @@ private fun renderGoogleMapContent(
 
         travelerPositions.add(Pair(member, latLng))
         boundsBuilder.include(latLng)
+        hasPoints = true
 
         val colorHex = travelerColors[index % travelerColors.size]
 
@@ -446,15 +532,16 @@ private fun renderGoogleMapContent(
 
     // Animate camera to include all markers (travelers & destination), fitting both into viewport
     try {
-        if (travelerPositions.size >= 2 || (hasValidDestination && hasPoints)) {
+        if (hasPoints) {
             val bounds = boundsBuilder.build()
-            map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, (80 * density).toInt()))
+            val padding = (95 * density).toInt()
+            map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, padding))
         } else {
-            val center = if (currLat != 0.0 && currLng != 0.0) LatLng(currLat, currLng) else srcLatLng
+            val center = if (effectiveUserLat != 0.0 && effectiveUserLng != 0.0) LatLng(effectiveUserLat, effectiveUserLng) else actualSrcLatLng
             map.animateCamera(CameraUpdateFactory.newLatLngZoom(center, 15f))
         }
     } catch (_: Exception) {
-        val center = if (currLat != 0.0 && currLng != 0.0) LatLng(currLat, currLng) else srcLatLng
+        val center = if (effectiveUserLat != 0.0 && effectiveUserLng != 0.0) LatLng(effectiveUserLat, effectiveUserLng) else actualSrcLatLng
         map.animateCamera(CameraUpdateFactory.newLatLngZoom(center, 14f))
     }
 }

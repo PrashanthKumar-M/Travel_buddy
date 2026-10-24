@@ -22,37 +22,61 @@ import kotlin.coroutines.resume
 actual object PlatformLocation {
     var appContext: Context? = null
     private var lastLocation: RealLocation? = null
+    private val activeListeners = java.util.concurrent.CopyOnWriteArraySet<(RealLocation) -> Unit>()
     private var activeListener: LocationListener? = null
     private var activeFusedCallback: LocationCallback? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var isTrackingStarted = false
 
     fun init(context: Context) {
         appContext = context.applicationContext
         // Seed initial cached GPS location
         fetchCachedLocation()
+        startContinuousTracking()
+    }
+
+    /**
+     * Updates device location directly (e.g., from Google Maps' native blue-dot location changes).
+     */
+    fun updateManualLocation(latitude: Double, longitude: Double, speedKmh: Double = 0.0) {
+        if (latitude == 0.0 && longitude == 0.0) return
+        val addr = reverseGeocode(latitude, longitude)
+            ?: LocationCoordinateResolver.resolveNearestCityOrArea(latitude, longitude)
+        val realLoc = RealLocation(
+            latitude = latitude,
+            longitude = longitude,
+            address = addr,
+            accuracyMeters = 5f,
+            speedKmh = speedKmh
+        )
+        lastLocation = realLoc
+        mainHandler.post {
+            activeListeners.forEach { it(realLoc) }
+        }
     }
 
     @SuppressLint("MissingPermission")
     private fun fetchCachedLocation() {
         val ctx = appContext ?: return
         try {
+            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            val gpsLoc = lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            val netLoc = lm?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            val passLoc = lm?.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
+            val bestLoc = listOfNotNull(gpsLoc, netLoc, passLoc).maxByOrNull { it.time }
+            if (bestLoc != null) {
+                lastLocation = toRealLocation(bestLoc)
+            }
+
             val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
             fusedClient.lastLocation.addOnSuccessListener { loc ->
                 if (loc != null) {
-                    lastLocation = toRealLocation(loc)
+                    val realLoc = toRealLocation(loc)
+                    lastLocation = realLoc
+                    mainHandler.post {
+                        activeListeners.forEach { it(realLoc) }
+                    }
                 }
-            }
-            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
-            val gpsLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            val netLoc = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            val bestLoc = when {
-                gpsLoc != null && netLoc != null -> if (gpsLoc.time >= netLoc.time) gpsLoc else netLoc
-                gpsLoc != null -> gpsLoc
-                netLoc != null -> netLoc
-                else -> null
-            }
-            if (bestLoc != null && lastLocation == null) {
-                lastLocation = toRealLocation(bestLoc)
             }
         } catch (_: Exception) {
         }
@@ -73,6 +97,15 @@ actual object PlatformLocation {
             return@suspendCancellableCoroutine
         }
         try {
+            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            val gpsLoc = lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            val netLoc = lm?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            val passLoc = lm?.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
+            val bestCached = listOfNotNull(gpsLoc, netLoc, passLoc).maxByOrNull { it.time }
+            if (bestCached != null && lastLocation == null) {
+                lastLocation = toRealLocation(bestCached)
+            }
+
             val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
             val cts = CancellationTokenSource()
             cont.invokeOnCancellation { cts.cancel() }
@@ -82,24 +115,29 @@ actual object PlatformLocation {
                     if (loc != null) {
                         val real = toRealLocation(loc)
                         lastLocation = real
+                        mainHandler.post { activeListeners.forEach { it(real) } }
                         if (cont.isActive) cont.resume(real)
                     } else {
                         // Fallback to fusedClient lastLocation
                         fusedClient.lastLocation.addOnSuccessListener { fallbackLoc ->
-                            if (fallbackLoc != null) {
-                                val real = toRealLocation(fallbackLoc)
+                            val chosen = fallbackLoc ?: bestCached
+                            if (chosen != null) {
+                                val real = toRealLocation(chosen)
                                 lastLocation = real
+                                mainHandler.post { activeListeners.forEach { it(real) } }
                                 if (cont.isActive) cont.resume(real)
                             } else {
                                 if (cont.isActive) cont.resume(lastLocation)
                             }
                         }.addOnFailureListener {
-                            if (cont.isActive) cont.resume(lastLocation)
+                            val real = bestCached?.let { toRealLocation(it) } ?: lastLocation
+                            if (cont.isActive) cont.resume(real)
                         }
                     }
                 }
                 .addOnFailureListener {
-                    if (cont.isActive) cont.resume(lastLocation)
+                    val real = bestCached?.let { toRealLocation(it) } ?: lastLocation
+                    if (cont.isActive) cont.resume(real)
                 }
         } catch (_: Exception) {
             if (cont.isActive) cont.resume(lastLocation)
@@ -107,25 +145,14 @@ actual object PlatformLocation {
     }
 
     @SuppressLint("MissingPermission")
-    actual fun startLocationUpdates(onUpdate: (RealLocation) -> Unit) {
+    fun startContinuousTracking() {
         val ctx = appContext ?: return
-        stopLocationUpdates()
+        if (isTrackingStarted) return
+        isTrackingStarted = true
 
-        // Immediate callback with last cached location if already known
-        lastLocation?.let { onUpdate(it) }
-
-        // 1. Google Play Services FusedLocationProviderClient (High accuracy GPS + Wi-Fi fusion indoors & outdoors)
         try {
             val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
-            fusedClient.lastLocation.addOnSuccessListener { loc ->
-                if (loc != null) {
-                    val realLoc = toRealLocation(loc)
-                    lastLocation = realLoc
-                    mainHandler.post { onUpdate(realLoc) }
-                }
-            }
-
-            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L).apply {
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1500L).apply {
                 setMinUpdateIntervalMillis(1000L)
                 setMinUpdateDistanceMeters(0f)
             }.build()
@@ -135,22 +162,20 @@ actual object PlatformLocation {
                     val loc = result.lastLocation ?: return
                     val realLoc = toRealLocation(loc)
                     lastLocation = realLoc
-                    mainHandler.post { onUpdate(realLoc) }
+                    mainHandler.post { activeListeners.forEach { it(realLoc) } }
                 }
             }
             activeFusedCallback = callback
             fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) {}
 
-        // 2. Fallback LocationManager in case Play Services is unavailable
         try {
             val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
             val listener = object : LocationListener {
                 override fun onLocationChanged(location: Location) {
                     val realLoc = toRealLocation(location)
                     lastLocation = realLoc
-                    mainHandler.post { onUpdate(realLoc) }
+                    mainHandler.post { activeListeners.forEach { it(realLoc) } }
                 }
 
                 @Deprecated("Deprecated in Java")
@@ -161,32 +186,25 @@ actual object PlatformLocation {
             activeListener = listener
 
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, listener, Looper.getMainLooper())
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1500L, 0f, listener, Looper.getMainLooper())
             }
             if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 0f, listener, Looper.getMainLooper())
+                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1500L, 0f, listener, Looper.getMainLooper())
             }
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) {}
+    }
+
+    @SuppressLint("MissingPermission")
+    actual fun startLocationUpdates(onUpdate: (RealLocation) -> Unit) {
+        activeListeners.add(onUpdate)
+        // Immediate callback with last cached location if already known
+        lastLocation?.let { onUpdate(it) }
+        startContinuousTracking()
     }
 
     actual fun stopLocationUpdates() {
-        val ctx = appContext ?: return
-        try {
-            activeFusedCallback?.let {
-                val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
-                fusedClient.removeLocationUpdates(it)
-            }
-            activeFusedCallback = null
-        } catch (_: Exception) {
-        }
-
-        try {
-            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
-            activeListener?.let { lm.removeUpdates(it) }
-            activeListener = null
-        } catch (_: Exception) {
-        }
+        // Keep continuous tracking alive so location remains available, but clear specific disposable callbacks
+        activeListeners.clear()
     }
 
     actual fun geocodeAddress(addressText: String): Pair<Double, Double>? {

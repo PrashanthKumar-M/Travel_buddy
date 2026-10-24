@@ -143,12 +143,22 @@ object LocationCoordinateResolver {
         val clean = cityName.trim()
         if (clean.isBlank()) return Pair(fallbackLat, fallbackLng)
 
-        // 1. Live / Current GPS location check
+        // 1. Live / Current GPS location check or generic defaults check
         val lower = clean.lowercase()
-        if (lower.contains("current location") || lower.contains("live location") || lower == "my location") {
+        val isGenericDefault = clean.contains("12.9716") ||
+                lower.contains("current location") ||
+                lower.contains("live location") ||
+                lower == "my location" ||
+                lower == "starting point" ||
+                lower == "start"
+
+        if (isGenericDefault) {
             val live = PlatformLocation.getCurrentLocation()
-            if (live != null) {
+            if (live != null && live.latitude != 0.0 && live.latitude != 12.9716) {
                 return Pair(live.latitude, live.longitude)
+            }
+            if (fallbackLat != 0.0 && fallbackLat != 12.9716) {
+                return Pair(fallbackLat, fallbackLng)
             }
         }
 

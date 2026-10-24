@@ -1937,9 +1937,17 @@ private fun CreateTripDialog(
     LaunchedEffect(Unit) {
         if (source.isBlank()) {
             val live = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
-            if (live != null) {
+            if (live != null && live.latitude != 0.0 && live.latitude != 12.9716) {
                 source = live.address?.takeIf { it.isNotBlank() }
                     ?: LocationCoordinateResolver.resolveNearestCityOrArea(live.latitude, live.longitude)
+            } else {
+                scope.launch {
+                    val fresh = PlatformLocation.fetchFreshLocation()
+                    if (fresh != null && fresh.latitude != 0.0) {
+                        source = fresh.address?.takeIf { it.isNotBlank() }
+                            ?: LocationCoordinateResolver.resolveNearestCityOrArea(fresh.latitude, fresh.longitude)
+                    }
+                }
             }
         }
     }
@@ -2382,10 +2390,10 @@ private fun CreateTripDialog(
                     if (destination.isBlank() || title.isBlank()) return@Button
                     val live = PlatformLocation.getCurrentLocation()
                     val resolvedSource = source.ifBlank {
-                        if (live != null) {
+                        if (live != null && live.latitude != 0.0) {
                             live.address?.takeIf { it.isNotBlank() }
                                 ?: LocationCoordinateResolver.resolveNearestCityOrArea(live.latitude, live.longitude)
-                        } else "Bengaluru"
+                        } else "Current Location"
                     }
                     val initialMembers = tripMembers.map { m ->
                         if (m.name.equals(myName, ignoreCase = true) && live != null) {
@@ -2779,8 +2787,16 @@ private fun TrackingScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     item {
+                        val (resolvedSrcLat, resolvedSrcLng) = LocationCoordinateResolver.resolveCoordinates(activeTrip?.source ?: "")
+                        val myRealLat = currentLiveLocation?.latitude ?: (if (resolvedSrcLat != 12.9716) resolvedSrcLat else 0.0)
+                        val myRealLng = currentLiveLocation?.longitude ?: (if (resolvedSrcLng != 77.5946) resolvedSrcLng else 0.0)
+
                         LiveGoogleMapView(
                             sourceName = srcName,
+                            sourceLat = resolvedSrcLat,
+                            sourceLng = resolvedSrcLng,
+                            currentUserLat = myRealLat,
+                            currentUserLng = myRealLng,
                             destinationName = dstName,
                             members = if (hasActiveTrip) distinctBuddies else emptyList(),
                             vehicle = null,
@@ -3364,8 +3380,16 @@ private fun TrackingScreen(
                         .fillMaxSize()
                         .background(Color.Black)
                 ) {
+                    val (resolvedSrcLat, resolvedSrcLng) = LocationCoordinateResolver.resolveCoordinates(activeTrip?.source ?: "")
+                    val myRealLat = currentLiveLocation?.latitude ?: (if (resolvedSrcLat != 12.9716) resolvedSrcLat else 0.0)
+                    val myRealLng = currentLiveLocation?.longitude ?: (if (resolvedSrcLng != 77.5946) resolvedSrcLng else 0.0)
+
                     LiveGoogleMapView(
                         sourceName = srcName,
+                        sourceLat = resolvedSrcLat,
+                        sourceLng = resolvedSrcLng,
+                        currentUserLat = myRealLat,
+                        currentUserLng = myRealLng,
                         destinationName = dstName,
                         members = if (hasActiveTrip) distinctBuddies else emptyList(),
                         vehicle = if (selectedMode == 1) vehicle else null,
