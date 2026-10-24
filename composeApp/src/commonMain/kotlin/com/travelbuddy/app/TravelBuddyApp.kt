@@ -969,10 +969,8 @@ private fun HomeScreen(
     navigate: (AppTab) -> Unit,
     openFriendsAndFamily: () -> Unit
 ) {
-    val homeListState = rememberLazyListState()
     LazyColumn(
-        state = homeListState,
-        modifier = Modifier.fillMaxSize().verticalScrollbar(homeListState),
+        modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 12.dp,
             end = 12.dp,
@@ -1022,22 +1020,12 @@ private fun HomeScreen(
         }
 
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Quick Actions",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = tbTextColor()
-                )
-                ScrollIndicatorHint(
-                    text = "Scroll for more",
-                    darkMode = LocalTravelBuddyDarkMode.current
-                )
-            }
+            Text(
+                "Quick Actions",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = tbTextColor()
+            )
         }
 
         item {
@@ -2266,25 +2254,13 @@ private fun CreateTripDialog(
     var destSuggestions by remember { mutableStateOf<List<PlaceSuggestion>>(emptyList()) }
     var sourceSuggestions by remember { mutableStateOf<List<PlaceSuggestion>>(emptyList()) }
 
-    val dialogListState = rememberLazyListState()
-
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Create Real-Time Trip")
-                ScrollIndicatorHint(text = "Scroll form", darkMode = false)
-            }
-        },
+        title = { Text("Create Real-Time Trip") },
         text = {
             LazyColumn(
-                state = dialogListState,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.height(480.dp).verticalScrollbar(dialogListState)
+                modifier = Modifier.height(480.dp)
             ) {
                 item {
                     Surface(
@@ -3189,6 +3165,25 @@ private fun TrackingScreen(
                             onToggleFullscreen = { isMapFullscreen = true },
                             modifier = Modifier.fillMaxWidth().height(320.dp)
                         )
+                    }
+
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Live Navigation & Team",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = tbTextColor()
+                            )
+                            ScrollIndicatorHint(
+                                text = "Scroll down for telemetry & table",
+                                darkMode = LocalTravelBuddyDarkMode.current
+                            )
+                        }
                     }
 
                     // Share & Join Tracking Code Card
@@ -4788,12 +4783,19 @@ private fun ExpensesScreen(
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            if (splitMode == 0) "Trip Expense Split" else "Personal Split",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = tbTextColor()
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                if (splitMode == 0) "Trip Expense Split" else "Personal Split",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = tbTextColor()
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            ScrollIndicatorHint(
+                                text = "Scroll for balances",
+                                darkMode = LocalTravelBuddyDarkMode.current
+                            )
+                        }
                         Text(groupTitle, fontSize = 12.sp, color = tbSubtextColor())
                     }
                     Button(
@@ -5247,11 +5249,8 @@ private fun MoreScreen(
     onOpenTelemetry: () -> Unit,
     onLogout: () -> Unit
 ) {
-    val moreScrollState = rememberLazyListState()
-
     LazyColumn(
-        state = moreScrollState,
-        modifier = Modifier.fillMaxSize().verticalScrollbar(moreScrollState),
+        modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 16.dp,
             end = 16.dp,
@@ -5516,11 +5515,9 @@ private fun EmergencyContactsDialog(
                 if (localContacts.isEmpty()) {
                     Text("No emergency contacts added yet. Tap below to add family, friends or co-riders.", color = Color.Gray, fontSize = 13.sp)
                 } else {
-                    val contactsListState = rememberLazyListState()
                     LazyColumn(
-                        state = contactsListState,
                         verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.height(300.dp).verticalScrollbar(contactsListState)
+                        modifier = Modifier.height(300.dp)
                     ) {
                         items(localContacts) { contact ->
                             Card(

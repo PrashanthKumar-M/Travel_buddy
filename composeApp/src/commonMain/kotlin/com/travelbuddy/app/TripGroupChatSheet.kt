@@ -140,7 +140,7 @@ fun TripGroupChatDialog(
                         } else {
                             LazyColumn(
                                 state = listState,
-                                modifier = Modifier.fillMaxSize().verticalScrollbar(listState),
+                                modifier = Modifier.fillMaxSize(),
                                 contentPadding = PaddingValues(vertical = 12.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
