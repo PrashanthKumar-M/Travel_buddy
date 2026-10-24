@@ -198,6 +198,13 @@ class KtorTravelRepository(
         )
     }
 
+    override suspend fun triggerSos(request: RemoteSosRequest): Result<Unit> = runCatching {
+        client.post(config.triggerSosEndpoint()) {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }.requireSuccess()
+    }
+
     fun close() = client.close()
 }
 

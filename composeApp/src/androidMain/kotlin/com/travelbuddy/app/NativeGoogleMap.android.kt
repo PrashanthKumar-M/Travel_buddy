@@ -268,35 +268,6 @@ actual fun NativeGoogleMapView(
                 }
             }
         }
-
-        // Live Tracking Status Pill at Top-Left
-        Surface(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(12.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = Color(0xFF0F172A).copy(alpha = 0.88f),
-            shadowElevation = 4.dp
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF22C55E))
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    "Real-Time Multi-User Tracking",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp
-                )
-            }
-        }
     }
 }
 
@@ -413,15 +384,10 @@ private fun renderGoogleMapContent(
         boundsBuilder.include(dstLatLng)
         hasPoints = true
 
-        // 3. Main Route Polyline: from user's live position (or start) to destination
-        val routeOrigin = if (effectiveUserLat != 0.0 && effectiveUserLng != 0.0) {
-            LatLng(effectiveUserLat, effectiveUserLng)
-        } else {
-            actualSrcLatLng
-        }
+        // 3. Main Route Polyline: from trip starting point to destination
         map.addPolyline(
             PolylineOptions()
-                .add(routeOrigin, dstLatLng)
+                .add(actualSrcLatLng, dstLatLng)
                 .width(12f)
                 .color(android.graphics.Color.parseColor("#1A73E8"))
                 .geodesic(true)

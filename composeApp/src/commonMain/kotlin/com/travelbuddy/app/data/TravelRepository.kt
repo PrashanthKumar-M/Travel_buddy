@@ -26,7 +26,18 @@ data class TravelApiConfig(
     fun sendChatMessageEndpoint(tripId: String) = "$api/chat/$tripId/messages"
     fun settlementsEndpoint(tripId: String) = "$api/expenses/trips/$tripId/settlements"
     fun devicesEndpoint() = "$api/devices"
+    fun triggerSosEndpoint() = "$api/safety/sos"
 }
+
+@Serializable data class RemoteSosRequest(
+    val tripId: String,
+    val userId: String,
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyMeters: Double? = 10.0,
+    val message: String = "",
+    val phoneNumbers: List<String> = emptyList()
+)
 
 @Serializable data class RequestOtpRequest(val phone: String? = null, val email: String? = null, val type: String = "MOBILE")
 @Serializable data class OtpVerificationRequest(val phone: String? = null, val email: String? = null, val otp: String)
@@ -95,6 +106,7 @@ interface TravelRepository {
     suspend fun settlements(tripId: String): Result<List<Settlement>>
     suspend fun getChatMessages(tripId: String): Result<List<RemoteChatMessage>>
     suspend fun sendChatMessage(tripId: String, request: RemoteSendMessageRequest): Result<RemoteChatMessage>
+    suspend fun triggerSos(request: RemoteSosRequest): Result<Unit>
 }
 
 data class VehicleApiConfig(val baseUrl: String, val tenantId: String, val bearerToken: String? = null) {

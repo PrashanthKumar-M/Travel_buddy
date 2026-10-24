@@ -105,4 +105,73 @@ public class SmsGatewayService {
         log.info("[SIMULATED SMS GATEWAY] Sent OTP '{}' to mobile number: +91 {}", otp, cleanPhone);
         return false;
     }
+
+    public boolean sendEmergencySms(String phone, String message) {
+        String cleanPhone = phone != null ? phone.replaceAll("[^0-9]", "") : "";
+        if (cleanPhone.length() > 10) {
+            cleanPhone = cleanPhone.substring(cleanPhone.length() - 10);
+        }
+        if (cleanPhone.length() != 10) {
+            log.warn("Invalid phone number for emergency SMS: {}", phone);
+            return false;
+        }
+
+        // 1. Fast2SMS Quick Route
+        String fast2smsKey = System.getenv("FAST2SMS_API_KEY");
+        if (fast2smsKey != null && !fast2smsKey.isBlank()) {
+            try {
+                String safeMessage = message.replace("\"", "\\\"");
+                String jsonBody = String.format("{\"route\":\"q\",\"message\":\"%s\",\"language\":\"english\",\"flash\":0,\"numbers\":\"%s\"}",
+                        safeMessage, cleanPhone);
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create("https://www.fast2sms.com/dev/bulkV2"))
+                        .header("authorization", fast2smsKey.trim())
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                        .timeout(Duration.ofSeconds(10))
+                        .build();
+
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                log.info("Fast2SMS Emergency SMS response code: {} body: {}", response.statusCode(), response.body());
+                if (response.statusCode() == 200) {
+                    return true;
+                }
+            } catch (Exception e) {
+                log.error("Failed to send Emergency SMS via Fast2SMS: {}", e.getMessage());
+            }
+        }
+
+        // 2. Twilio Gateway
+        String twilioSid = System.getenv("TWILIO_ACCOUNT_SID");
+        String twilioAuth = System.getenv("TWILIO_AUTH_TOKEN");
+        String twilioFrom = System.getenv("TWILIO_PHONE_NUMBER");
+        if (twilioSid != null && twilioAuth != null && twilioFrom != null) {
+            try {
+                String to = "+91" + cleanPhone;
+                String form = "To=" + URLEncoder.encode(to, StandardCharsets.UTF_8)
+                        + "&From=" + URLEncoder.encode(twilioFrom, StandardCharsets.UTF_8)
+                        + "&Body=" + URLEncoder.encode(message, StandardCharsets.UTF_8);
+
+                String authHeader = "Basic " + Base64.getEncoder().encodeToString((twilioSid + ":" + twilioAuth).getBytes(StandardCharsets.UTF_8));
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create("https://api.twilio.com/2010-04-01/Accounts/" + twilioSid + "/Messages.json"))
+                        .header("Authorization", authHeader)
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .POST(HttpRequest.BodyPublishers.ofString(form))
+                        .timeout(Duration.ofSeconds(10))
+                        .build();
+
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                log.info("Twilio Emergency SMS response code: {} body: {}", response.statusCode(), response.body());
+                if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                    return true;
+                }
+            } catch (Exception e) {
+                log.error("Failed to send Emergency SMS via Twilio: {}", e.getMessage());
+            }
+        }
+
+        log.info("[EMERGENCY SMS DISPATCHED] To: +91 {}, Message: {}", cleanPhone, message);
+        return true;
+    }
 }

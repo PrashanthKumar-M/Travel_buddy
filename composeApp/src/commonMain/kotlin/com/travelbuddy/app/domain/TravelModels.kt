@@ -11,7 +11,11 @@ data class Trip(
     val coverImage: String? = null,
     val vehicleType: String = "CAR", // "CAR", "BIKE", "CYCLE"
     val tripCode: String = id,
-    val createdBy: String = ""
+    val createdBy: String = "",
+    val sourceLat: Double = 0.0,
+    val sourceLng: Double = 0.0,
+    val destLat: Double = 0.0,
+    val destLng: Double = 0.0
 )
 
 enum class TripStatus { PLANNING, LIVE, COMPLETED }

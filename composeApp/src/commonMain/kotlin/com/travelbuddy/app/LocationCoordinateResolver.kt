@@ -197,11 +197,13 @@ object LocationCoordinateResolver {
             }
         }
 
-        // 7. Fallback for unknown place: generate reproducible deterministic offset based on hash
-        val hash = abs(clean.hashCode())
-        val latOffset = (hash % 100) / 100.0 * 2.0 - 1.0
-        val lngOffset = ((hash / 100) % 100) / 100.0 * 2.0 - 1.0
-        return Pair(fallbackLat + latOffset, fallbackLng + lngOffset)
+        // 7. If coordinates or fallback provided, use them
+        if (fallbackLat != 0.0 && fallbackLng != 0.0 && fallbackLat != 12.9716) {
+            return Pair(fallbackLat, fallbackLng)
+        }
+
+        // 8. If clean input has comma/dash tokens, keep fallback
+        return Pair(fallbackLat, fallbackLng)
     }
 
     /**
@@ -209,7 +211,7 @@ object LocationCoordinateResolver {
      * Uses platform reverse geocoder if available, otherwise identifies the nearest city or locality.
      */
     fun resolveNearestCityOrArea(latitude: Double, longitude: Double): String {
-        if (latitude == 0.0 && longitude == 0.0) return "Bengaluru"
+        if (latitude == 0.0 && longitude == 0.0) return "Current Location"
         // 1. Try platform reverse geocode
         try {
             val geocoded = PlatformLocation.reverseGeocode(latitude, longitude)
@@ -218,9 +220,9 @@ object LocationCoordinateResolver {
             }
         } catch (_: Exception) {}
 
-        // 2. Identify nearest city or locality from dictionary
+        // 2. Identify nearest city or locality from dictionary if within close proximity (< 10km)
         var minDistanceKm = Double.MAX_VALUE
-        var closestPlace = "Bengaluru"
+        var closestPlace: String? = null
         for ((name, coords) in cityCoordinates) {
             val dist = haversineDistanceKm(latitude, longitude, coords.first, coords.second)
             if (dist < minDistanceKm) {
@@ -229,12 +231,14 @@ object LocationCoordinateResolver {
             }
         }
 
-        val formatted = closestPlace.split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
-        return when {
-            minDistanceKm <= 15.0 -> formatted
-            minDistanceKm <= 40.0 -> "$formatted, Karnataka"
-            else -> "$formatted Region"
+        if (closestPlace != null && minDistanceKm <= 10.0) {
+            val formatted = closestPlace.split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+            return formatted
         }
+
+        val latStr = (round(latitude * 10000.0) / 10000.0).toString()
+        val lngStr = (round(longitude * 10000.0) / 10000.0).toString()
+        return "Pinpoint Location ($latStr, $lngStr)"
     }
 
     /**

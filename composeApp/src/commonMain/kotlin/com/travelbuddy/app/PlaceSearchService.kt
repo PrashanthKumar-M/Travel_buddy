@@ -61,10 +61,14 @@ object PlaceSearchService {
         val clean = query.trim()
         if (clean.length < 2) return@withContext emptyList()
 
-        // 1. Check local fast-match
-        val localMatches = verifiedDestinations.filter {
-            it.name.contains(clean, ignoreCase = true) ||
-            it.description.contains(clean, ignoreCase = true)
+        // 1. Primary: Query Platform Native Geocoder (Google Play Services Geocoder on Android)
+        val platformMatches = try {
+            PlatformLocation.searchAddressSuggestions(clean)
+        } catch (_: Exception) {
+            emptyList()
+        }
+        if (platformMatches.isNotEmpty()) {
+            return@withContext platformMatches.take(6)
         }
 
         // 2. Query Official Google Places API with the configured Google Key
@@ -97,8 +101,13 @@ object PlaceSearchService {
         } else emptyList()
 
         if (googleMatches.isNotEmpty()) {
-            val combined = (localMatches + googleMatches).distinctBy { it.name }
-            return@withContext combined.take(6)
+            return@withContext googleMatches.take(6)
+        }
+
+        // 3. Fast local verified matching
+        val localMatches = verifiedDestinations.filter {
+            it.name.contains(clean, ignoreCase = true) ||
+            it.description.contains(clean, ignoreCase = true)
         }
 
         // 3. Resilient fallback: India-restricted Nominatim geocoder (restricted strictly to India & English)

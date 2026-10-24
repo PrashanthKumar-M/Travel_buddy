@@ -15,4 +15,5 @@ expect object PlatformLocation {
     fun stopLocationUpdates()
     fun geocodeAddress(addressText: String): Pair<Double, Double>?
     fun reverseGeocode(latitude: Double, longitude: Double): String?
+    fun searchAddressSuggestions(query: String): List<PlaceSuggestion>
 }

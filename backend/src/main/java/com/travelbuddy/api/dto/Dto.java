@@ -121,6 +121,7 @@ public class Dto {
             double latitude,
             double longitude,
             Double accuracyMeters,
-            String message
+            String message,
+            java.util.List<String> phoneNumbers
     ) {}
 }

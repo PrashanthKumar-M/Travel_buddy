@@ -837,6 +837,16 @@ public class TravelBuddyStateService {
                 System.currentTimeMillis()
         );
         sosAlerts.put(id, alert);
+
+        // Send SMS to all enabled emergency contacts
+        if (req.phoneNumbers() != null && !req.phoneNumbers().isEmpty()) {
+            for (String phone : req.phoneNumbers()) {
+                if (phone != null && !phone.isBlank()) {
+                    smsGatewayService.sendEmergencySms(phone.trim(), alert.message());
+                }
+            }
+        }
+
         return alert;
     }
 

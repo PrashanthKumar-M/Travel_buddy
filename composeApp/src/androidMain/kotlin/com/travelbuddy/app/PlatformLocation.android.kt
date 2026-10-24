@@ -212,15 +212,57 @@ actual object PlatformLocation {
         val clean = addressText.trim()
         if (clean.isBlank()) return null
         return try {
-            val geocoder = Geocoder(ctx, Locale.getDefault())
-            @Suppress("DEPRECATION")
-            val matches = geocoder.getFromLocationName(clean, 1)
-            if (!matches.isNullOrEmpty()) {
-                val match = matches[0]
-                Pair(match.latitude, match.longitude)
-            } else null
+            val future = java.util.concurrent.CompletableFuture.supplyAsync {
+                try {
+                    val geocoder = Geocoder(ctx, Locale.getDefault())
+                    @Suppress("DEPRECATION")
+                    val matches = geocoder.getFromLocationName(clean, 1)
+                    if (!matches.isNullOrEmpty()) {
+                        val match = matches[0]
+                        Pair(match.latitude, match.longitude)
+                    } else null
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            future.get(4000, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (_: Exception) {
             null
+        }
+    }
+
+    actual fun searchAddressSuggestions(query: String): List<PlaceSuggestion> {
+        val ctx = appContext ?: return emptyList()
+        val clean = query.trim()
+        if (clean.length < 2) return emptyList()
+        return try {
+            val future = java.util.concurrent.CompletableFuture.supplyAsync {
+                try {
+                    val geocoder = Geocoder(ctx, Locale.getDefault())
+                    @Suppress("DEPRECATION")
+                    val matches = geocoder.getFromLocationName(clean, 6)
+                    if (!matches.isNullOrEmpty()) {
+                        matches.map { addr ->
+                            val full = addr.getAddressLine(0) ?: ""
+                            val mainText = addr.featureName
+                                ?: addr.thoroughfare
+                                ?: full.split(",").firstOrNull()?.trim()
+                                ?: clean
+                            PlaceSuggestion(
+                                name = mainText,
+                                description = full.ifBlank { "$mainText, ${addr.locality ?: addr.adminArea ?: ""}" },
+                                latitude = addr.latitude,
+                                longitude = addr.longitude
+                            )
+                        }
+                    } else emptyList()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }
+            future.get(3500, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 
@@ -234,15 +276,25 @@ actual object PlatformLocation {
                     val matches = geocoder.getFromLocation(latitude, longitude, 1)
                     if (!matches.isNullOrEmpty()) {
                         val addr = matches[0]
-                        val subLocality = addr.subLocality ?: addr.thoroughfare ?: addr.featureName
+                        val feature = addr.featureName
+                        val thoroughfare = addr.thoroughfare
+                        val subLocality = addr.subLocality
                         val locality = addr.locality ?: addr.subAdminArea ?: addr.adminArea
                         val fullAddress = addr.getAddressLine(0)
 
-                        when {
-                            !subLocality.isNullOrBlank() && !locality.isNullOrBlank() -> "$subLocality, $locality"
-                            !fullAddress.isNullOrBlank() -> fullAddress.split(",").take(2).joinToString(",").trim()
-                            !locality.isNullOrBlank() -> locality
+                        val street = when {
+                            !thoroughfare.isNullOrBlank() && !subLocality.isNullOrBlank() && thoroughfare != subLocality -> "$thoroughfare, $subLocality"
+                            !thoroughfare.isNullOrBlank() -> thoroughfare
                             !subLocality.isNullOrBlank() -> subLocality
+                            !feature.isNullOrBlank() && !feature.matches(Regex("""\d+""")) -> feature
+                            else -> null
+                        }
+
+                        when {
+                            street != null && !locality.isNullOrBlank() -> "$street, $locality"
+                            street != null -> street
+                            !fullAddress.isNullOrBlank() -> fullAddress.split(",").take(3).joinToString(",").trim()
+                            !locality.isNullOrBlank() -> locality
                             else -> fullAddress
                         }
                     } else null
@@ -250,7 +302,7 @@ actual object PlatformLocation {
                     null
                 }
             }
-            future.get(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            future.get(3500, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (_: Exception) {
             null
         }

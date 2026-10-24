@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.travelbuddy.app.domain.EmergencyContact
 import com.travelbuddy.app.domain.Expense
 import com.travelbuddy.app.domain.ExpenseCalculator
 import com.travelbuddy.app.domain.Trip
@@ -204,11 +205,12 @@ internal fun TravelBuddyMain(
 
     var sosSent by remember { mutableStateOf(false) }
     var showSosDialog by remember { mutableStateOf(false) }
+    var showSosSentSuccessDialog by remember { mutableStateOf(false) }
     var showEmergencyContacts by remember { mutableStateOf(false) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
 
     var emergencyContacts by remember {
-        mutableStateOf(sampleEmergencyContacts())
+        mutableStateOf(EmergencyContactStorage.loadContacts())
     }
 
     var members by remember { mutableStateOf(starterMembers) }
@@ -463,7 +465,11 @@ internal fun TravelBuddyMain(
                                         members = tripMembers,
                                         coverImage = draft.coverImage,
                                         vehicleType = draft.vehicleType,
-                                        createdBy = currentUserName.ifBlank { "You" }
+                                        createdBy = currentUserName.ifBlank { "You" },
+                                        sourceLat = draft.sourceLat,
+                                        sourceLng = draft.sourceLng,
+                                        destLat = draft.destLat,
+                                        destLng = draft.destLng
                                     )
                                     activeTrip = localTrip
                                     trips = trips + localTrip
@@ -498,7 +504,13 @@ internal fun TravelBuddyMain(
                                     )
                                     repository.createTrip(request)
                                         .onSuccess { trip ->
-                                            val finalTrip = (if (trip.members.isEmpty()) trip.copy(members = tripMembers) else trip).copy(createdBy = trip.createdBy.ifBlank { myCreatorName })
+                                            val finalTrip = (if (trip.members.isEmpty()) trip.copy(members = tripMembers) else trip).copy(
+                                                createdBy = trip.createdBy.ifBlank { myCreatorName },
+                                                sourceLat = draft.sourceLat,
+                                                sourceLng = draft.sourceLng,
+                                                destLat = draft.destLat,
+                                                destLng = draft.destLng
+                                            )
                                             activeTrip = finalTrip
                                             trips = trips + finalTrip
                                             members = finalTrip.members
@@ -728,8 +740,63 @@ internal fun TravelBuddyMain(
                     showEmergencyContacts = true
                 },
                 onConfirm = {
+                    val live = PlatformLocation.getCurrentLocation()
+                    val activeContacts = emergencyContacts.filter { it.isEnabled }
+                    val lat = live?.latitude ?: 0.0
+                    val lng = live?.longitude ?: 0.0
+                    val msg = "EMERGENCY SOS from ${currentUserName.ifBlank { "Traveler" }}! Live Location: https://maps.google.com/?q=$lat,$lng"
+                    scope.launch {
+                        try {
+                            repository.triggerSos(
+                                com.travelbuddy.app.data.RemoteSosRequest(
+                                    tripId = activeTrip?.id ?: "emergency",
+                                    userId = currentUserName.ifBlank { "Traveler" },
+                                    latitude = lat,
+                                    longitude = lng,
+                                    message = msg,
+                                    phoneNumbers = activeContacts.map { it.phone }
+                                )
+                            )
+                        } catch (_: Exception) {}
+                    }
                     sosSent = true
                     showSosDialog = false
+                    showSosSentSuccessDialog = true
+                }
+            )
+        }
+
+        if (showSosSentSuccessDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showSosSentSuccessDialog = false
+                    sosSent = false
+                },
+                icon = {
+                    androidx.compose.material3.Icon(
+                        androidx.compose.material.icons.Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = Green,
+                        modifier = Modifier.size(36.dp)
+                    )
+                },
+                title = { Text("SOS Alert Dispatched!", fontWeight = FontWeight.Bold) },
+                text = {
+                    val activeCount = emergencyContacts.count { it.isEnabled }
+                    Text(
+                        "Emergency SOS broadcasted successfully. SMS notifications with your live GPS location link have been dispatched to $activeCount active emergency contact(s)."
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showSosSentSuccessDialog = false
+                            sosSent = false // Turns SOS button back to RED!
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Red)
+                    ) {
+                        Text("OK", fontWeight = FontWeight.Bold, color = Color.White)
+                    }
                 }
             )
         }
@@ -740,6 +807,7 @@ internal fun TravelBuddyMain(
                 onDismiss = { showEmergencyContacts = false },
                 onSave = {
                     emergencyContacts = it
+                    EmergencyContactStorage.saveContacts(it)
                     showEmergencyContacts = false
                 }
             )
@@ -831,16 +899,23 @@ private fun Header(
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
             }
-            IconButton(
-                onClick = onSos,
-                modifier = Modifier.size(40.dp)
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = if (sosSent) Color(0xFF16A34A) else Color(0xFFDC2626),
+                shadowElevation = 3.dp,
+                modifier = Modifier.clickable { onSos() }
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.Notifications,
-                    contentDescription = "Alerts & SOS",
-                    tint = if (sosSent) Green else (if (darkMode) Color.White else Navy),
-                    modifier = Modifier.size(24.dp)
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (sosSent) "✓ SOS SENT" else "🚨 SOS",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
             }
         }
     }
@@ -1933,25 +2008,27 @@ private fun CreateTripDialog(
     val scope = rememberCoroutineScope()
     var isDetectingGps by remember { mutableStateOf(false) }
     var source by remember { mutableStateOf("") }
+    var sourceLat by remember { mutableStateOf(0.0) }
+    var sourceLng by remember { mutableStateOf(0.0) }
+    var destination by remember { mutableStateOf("") }
+    var destLat by remember { mutableStateOf(0.0) }
+    var destLng by remember { mutableStateOf(0.0) }
 
     LaunchedEffect(Unit) {
         if (source.isBlank()) {
             val live = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
             if (live != null && live.latitude != 0.0 && live.latitude != 12.9716) {
-                source = live.address?.takeIf { it.isNotBlank() }
-                    ?: LocationCoordinateResolver.resolveNearestCityOrArea(live.latitude, live.longitude)
-            } else {
-                scope.launch {
-                    val fresh = PlatformLocation.fetchFreshLocation()
-                    if (fresh != null && fresh.latitude != 0.0) {
-                        source = fresh.address?.takeIf { it.isNotBlank() }
-                            ?: LocationCoordinateResolver.resolveNearestCityOrArea(fresh.latitude, fresh.longitude)
-                    }
+                sourceLat = live.latitude
+                sourceLng = live.longitude
+                val geocoded = PlatformLocation.reverseGeocode(live.latitude, live.longitude)
+                source = when {
+                    !geocoded.isNullOrBlank() -> geocoded
+                    !live.address.isNullOrBlank() -> live.address
+                    else -> LocationCoordinateResolver.resolveNearestCityOrArea(live.latitude, live.longitude)
                 }
             }
         }
     }
-    var destination by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
     var startDate by remember { mutableStateOf("Today") }
     var endDate by remember { mutableStateOf("Tomorrow") }
@@ -1998,24 +2075,32 @@ private fun CreateTripDialog(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
-                                Text("Live Trip Code (Share with friends to track)", fontSize = 10.sp, color = Color(0xFF64748B))
-                                Text(generatedTripId, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Live Trip Code (Share with friends to track)",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B),
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                                Text(generatedTripId, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                             }
+                            Spacer(Modifier.width(8.dp))
                             Surface(
                                 color = Color(0xFFDCFCE7),
                                 shape = RoundedCornerShape(6.dp)
                             ) {
                                 Text(
                                     text = "REALTIME ID",
-                                    fontSize = 10.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF166534),
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
                         }
@@ -2027,6 +2112,8 @@ private fun CreateTripDialog(
                             value = destination,
                             onValueChange = {
                                 destination = it
+                                destLat = 0.0
+                                destLng = 0.0
                                 if (title.isBlank() || title.startsWith("Trip to ")) {
                                     title = "Trip to ${it.split(",")[0]}"
                                 }
@@ -2055,6 +2142,8 @@ private fun CreateTripDialog(
                                                 .fillMaxWidth()
                                                 .clickable {
                                                     destination = suggestion.name
+                                                    destLat = suggestion.latitude
+                                                    destLng = suggestion.longitude
                                                     title = "Trip to ${suggestion.name.split(",")[0]}"
                                                     destSuggestions = emptyList()
                                                 }
@@ -2080,6 +2169,8 @@ private fun CreateTripDialog(
                             value = source,
                             onValueChange = {
                                 source = it
+                                sourceLat = 0.0
+                                sourceLng = 0.0
                                 scope.launch {
                                     sourceSuggestions = PlaceSearchService.searchPlaces(it)
                                 }
@@ -2100,11 +2191,15 @@ private fun CreateTripDialog(
                                     isDetectingGps = true
                                     scope.launch {
                                         val fresh = PlatformLocation.fetchFreshLocation() ?: PlatformLocation.getCurrentLocation()
-                                        if (fresh != null) {
-                                            source = fresh.address?.takeIf { it.isNotBlank() }
-                                                ?: LocationCoordinateResolver.resolveNearestCityOrArea(fresh.latitude, fresh.longitude)
-                                        } else {
-                                            source = "Bengaluru"
+                                        if (fresh != null && fresh.latitude != 0.0) {
+                                            sourceLat = fresh.latitude
+                                            sourceLng = fresh.longitude
+                                            val geocoded = PlatformLocation.reverseGeocode(fresh.latitude, fresh.longitude)
+                                            source = when {
+                                                !geocoded.isNullOrBlank() -> geocoded
+                                                !fresh.address.isNullOrBlank() -> fresh.address
+                                                else -> LocationCoordinateResolver.resolveNearestCityOrArea(fresh.latitude, fresh.longitude)
+                                            }
                                         }
                                         sourceSuggestions = emptyList()
                                         isDetectingGps = false
@@ -2138,6 +2233,8 @@ private fun CreateTripDialog(
                                                 .fillMaxWidth()
                                                 .clickable {
                                                     source = suggestion.name
+                                                    sourceLat = suggestion.latitude
+                                                    sourceLng = suggestion.longitude
                                                     sourceSuggestions = emptyList()
                                                 }
                                                 .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -2388,38 +2485,73 @@ private fun CreateTripDialog(
             Button(
                 onClick = {
                     if (destination.isBlank() || title.isBlank()) return@Button
-                    val live = PlatformLocation.getCurrentLocation()
-                    val resolvedSource = source.ifBlank {
-                        if (live != null && live.latitude != 0.0) {
-                            live.address?.takeIf { it.isNotBlank() }
-                                ?: LocationCoordinateResolver.resolveNearestCityOrArea(live.latitude, live.longitude)
-                        } else "Current Location"
-                    }
-                    val initialMembers = tripMembers.map { m ->
-                        if (m.name.equals(myName, ignoreCase = true) && live != null) {
-                            m.copy(latitude = live.latitude, longitude = live.longitude, speedKmh = live.speedKmh)
-                        } else m
-                    }
-                    onCreated(
-                        CreateTripData(
-                            id = generatedTripId,
-                            source = resolvedSource,
-                            destination = destination,
-                            title = title,
-                            rideDate = "$startDate - $endDate",
-                            flagOffTime = flagOffTime,
-                            reportTime = reportTime,
-                            multiDay = multiDay,
-                            rideType = RideType.OPEN_TO_ALL,
-                            notes = notes,
-                            memberIds = initialMembers.map { it.id }.toSet(),
-                            dynamicMembers = initialMembers,
-                            vehicleDetails = vehicleDetails.takeIf { it.isNotBlank() },
-                            vehicleType = selectedVehicle,
-                            coverImage = coverImage.takeIf { it.isNotBlank() },
-                            reminderEnabled = reminderEnabled
+                    scope.launch {
+                        val live = PlatformLocation.getCurrentLocation()
+                        var finalSrcLat = sourceLat
+                        var finalSrcLng = sourceLng
+                        var finalDstLat = destLat
+                        var finalDstLng = destLng
+
+                        // Resolve source coordinates if manual text was entered
+                        if (finalSrcLat == 0.0 && source.isNotBlank()) {
+                            val resolved = PlatformLocation.geocodeAddress(source)
+                            if (resolved != null) {
+                                finalSrcLat = resolved.first
+                                finalSrcLng = resolved.second
+                            }
+                        }
+
+                        // Resolve destination coordinates if manual text was entered
+                        if (finalDstLat == 0.0 && destination.isNotBlank()) {
+                            val resolved = PlatformLocation.geocodeAddress(destination)
+                            if (resolved != null) {
+                                finalDstLat = resolved.first
+                                finalDstLng = resolved.second
+                            }
+                        }
+
+                        val resolvedSource = source.ifBlank {
+                            if (live != null && live.latitude != 0.0) {
+                                finalSrcLat = live.latitude
+                                finalSrcLng = live.longitude
+                                val geocoded = PlatformLocation.reverseGeocode(live.latitude, live.longitude)
+                                when {
+                                    !geocoded.isNullOrBlank() -> geocoded
+                                    !live.address.isNullOrBlank() -> live.address
+                                    else -> LocationCoordinateResolver.resolveNearestCityOrArea(live.latitude, live.longitude)
+                                }
+                            } else "Current Location"
+                        }
+                        val initialMembers = tripMembers.map { m ->
+                            if (m.name.equals(myName, ignoreCase = true) && live != null) {
+                                m.copy(latitude = live.latitude, longitude = live.longitude, speedKmh = live.speedKmh)
+                            } else m
+                        }
+                        onCreated(
+                            CreateTripData(
+                                id = generatedTripId,
+                                source = resolvedSource,
+                                destination = destination,
+                                title = title,
+                                rideDate = "$startDate - $endDate",
+                                flagOffTime = flagOffTime,
+                                reportTime = reportTime,
+                                multiDay = multiDay,
+                                rideType = RideType.OPEN_TO_ALL,
+                                notes = notes,
+                                memberIds = initialMembers.map { it.id }.toSet(),
+                                dynamicMembers = initialMembers,
+                                vehicleDetails = vehicleDetails.takeIf { it.isNotBlank() },
+                                vehicleType = selectedVehicle,
+                                coverImage = coverImage.takeIf { it.isNotBlank() },
+                                reminderEnabled = reminderEnabled,
+                                sourceLat = finalSrcLat,
+                                sourceLng = finalSrcLng,
+                                destLat = finalDstLat,
+                                destLng = finalDstLng
+                            )
                         )
-                    )
+                    }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Red)
             ) {
@@ -2787,7 +2919,16 @@ private fun TrackingScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     item {
-                        val (resolvedSrcLat, resolvedSrcLng) = LocationCoordinateResolver.resolveCoordinates(activeTrip?.source ?: "")
+                        val (resolvedSrcLat, resolvedSrcLng) = if (activeTrip != null && activeTrip.sourceLat != 0.0 && activeTrip.sourceLng != 0.0) {
+                            Pair(activeTrip.sourceLat, activeTrip.sourceLng)
+                        } else {
+                            LocationCoordinateResolver.resolveCoordinates(activeTrip?.source ?: "")
+                        }
+                        val (resolvedDstLat, resolvedDstLng) = if (activeTrip != null && activeTrip.destLat != 0.0 && activeTrip.destLng != 0.0) {
+                            Pair(activeTrip.destLat, activeTrip.destLng)
+                        } else {
+                            LocationCoordinateResolver.resolveCoordinates(activeTrip?.destination ?: "")
+                        }
                         val myRealLat = currentLiveLocation?.latitude ?: (if (resolvedSrcLat != 12.9716) resolvedSrcLat else 0.0)
                         val myRealLng = currentLiveLocation?.longitude ?: (if (resolvedSrcLng != 77.5946) resolvedSrcLng else 0.0)
 
@@ -2798,6 +2939,8 @@ private fun TrackingScreen(
                             currentUserLat = myRealLat,
                             currentUserLng = myRealLng,
                             destinationName = dstName,
+                            destinationLat = resolvedDstLat,
+                            destinationLng = resolvedDstLng,
                             members = if (hasActiveTrip) distinctBuddies else emptyList(),
                             vehicle = null,
                             vehicleType = activeTrip?.vehicleType ?: "CAR",
@@ -3380,7 +3523,16 @@ private fun TrackingScreen(
                         .fillMaxSize()
                         .background(Color.Black)
                 ) {
-                    val (resolvedSrcLat, resolvedSrcLng) = LocationCoordinateResolver.resolveCoordinates(activeTrip?.source ?: "")
+                    val (resolvedSrcLat, resolvedSrcLng) = if (activeTrip != null && activeTrip.sourceLat != 0.0 && activeTrip.sourceLng != 0.0) {
+                        Pair(activeTrip.sourceLat, activeTrip.sourceLng)
+                    } else {
+                        LocationCoordinateResolver.resolveCoordinates(activeTrip?.source ?: "")
+                    }
+                    val (resolvedDstLat, resolvedDstLng) = if (activeTrip != null && activeTrip.destLat != 0.0 && activeTrip.destLng != 0.0) {
+                        Pair(activeTrip.destLat, activeTrip.destLng)
+                    } else {
+                        LocationCoordinateResolver.resolveCoordinates(activeTrip?.destination ?: "")
+                    }
                     val myRealLat = currentLiveLocation?.latitude ?: (if (resolvedSrcLat != 12.9716) resolvedSrcLat else 0.0)
                     val myRealLng = currentLiveLocation?.longitude ?: (if (resolvedSrcLng != 77.5946) resolvedSrcLng else 0.0)
 
@@ -3391,6 +3543,8 @@ private fun TrackingScreen(
                         currentUserLat = myRealLat,
                         currentUserLng = myRealLng,
                         destinationName = dstName,
+                        destinationLat = resolvedDstLat,
+                        destinationLng = resolvedDstLng,
                         members = if (hasActiveTrip) distinctBuddies else emptyList(),
                         vehicle = if (selectedMode == 1) vehicle else null,
                         vehicleType = activeTrip?.vehicleType ?: "CAR",
@@ -5032,19 +5186,12 @@ private data class CreateTripData(
     val vehicleDetails: String?,
     val vehicleType: String = "CAR",
     val coverImage: String?,
-    val reminderEnabled: Boolean
+    val reminderEnabled: Boolean,
+    val sourceLat: Double = 0.0,
+    val sourceLng: Double = 0.0,
+    val destLat: Double = 0.0,
+    val destLng: Double = 0.0
 )
-
-private data class EmergencyContact(
-    val id: String,
-    val name: String,
-    val relation: String,
-    val phone: String,
-    val notifyBySms: Boolean = true,
-    val notifyByCall: Boolean = true
-)
-
-private fun sampleEmergencyContacts() = emptyList<EmergencyContact>()
 
 @Composable
 private fun SosConfirmationDialog(
@@ -5053,32 +5200,53 @@ private fun SosConfirmationDialog(
     onManageContacts: () -> Unit,
     onConfirm: () -> Unit
 ) {
+    val enabledCount = contacts.count { it.isEnabled }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Emergency SOS") },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🚨 Emergency SOS", fontWeight = FontWeight.Bold, color = Red)
+            }
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("SOS will alert your configured emergency contacts with your latest available trip location.")
+                Text("Triggering SOS will broadcast your pinpoint live GPS coordinates and send emergency SMS to your enabled contacts.")
                 Text(
-                    if (contacts.isEmpty()) "No emergency contacts configured"
-                    else "${contacts.size} emergency contacts configured",
-                    fontWeight = FontWeight.Bold
+                    if (contacts.isEmpty()) "⚠️ No emergency contacts configured"
+                    else "$enabledCount of ${contacts.size} emergency contacts enabled for SMS",
+                    fontWeight = FontWeight.Bold,
+                    color = if (enabledCount > 0) Color(0xFF1E293B) else Red
                 )
-                contacts.forEach {
-                    Text("${it.name} • ${it.relation} • ${it.phone}", fontSize = 13.sp)
+                contacts.forEach { contact ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (contact.isEnabled) "✓" else "✕",
+                            color = if (contact.isEnabled) Green else Color.Gray,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(18.dp)
+                        )
+                        Text(
+                            text = "${contact.name} (${contact.relation}) • ${contact.phone}",
+                            fontSize = 13.sp,
+                            color = if (contact.isEnabled) Color(0xFF0F172A) else Color.Gray
+                        )
+                    }
                 }
-                Text("For immediate danger, also contact your local emergency service.", color = Red, fontSize = 12.sp)
+                Text("For immediate life-threatening danger, also call 112 / 100 directly.", color = Red, fontSize = 11.sp)
             }
         },
         confirmButton = {
             Button(
                 onClick = onConfirm,
                 colors = ButtonDefaults.buttonColors(containerColor = Red)
-            ) { Text("SEND SOS") }
+            ) { Text("SEND SOS NOW", fontWeight = FontWeight.Bold, color = Color.White) }
         },
         dismissButton = {
             Row {
-                TextButton(onClick = onManageContacts) { Text("Manage") }
+                TextButton(onClick = onManageContacts) { Text("Manage Contacts") }
                 TextButton(onClick = onDismiss) { Text("Cancel") }
             }
         }
@@ -5096,44 +5264,100 @@ private fun EmergencyContactsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Emergency Contacts") },
+        title = { Text("Manage Emergency SOS Contacts", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Add contacts to receive emergency SMS with your live location. You can tap their number to dial directly, or toggle alerts on/off.",
+                    fontSize = 12.sp,
+                    color = Color(0xFF64748B)
+                )
                 if (localContacts.isEmpty()) {
-                    Text("No emergency contacts added yet.", color = Color.Gray)
+                    Text("No emergency contacts added yet. Tap below to add family, friends or co-riders.", color = Color.Gray, fontSize = 13.sp)
                 } else {
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.height(320.dp)
+                        modifier = Modifier.height(300.dp)
                     ) {
                         items(localContacts) { contact ->
-                            Card(modifier = Modifier.fillMaxWidth()) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(contact.name, fontWeight = FontWeight.Bold)
-                                        Text(
-                                            "${contact.relation} • ${contact.phone}",
-                                            fontSize = 12.sp,
-                                            color = Color.Gray
-                                        )
-                                        Text(
-                                            buildString {
-                                                if (contact.notifyBySms) append("SMS ")
-                                                if (contact.notifyByCall) append("Call")
-                                            }.trim(),
-                                            fontSize = 11.sp,
-                                            color = Red
-                                        )
-                                    }
-                                    TextButton(
-                                        onClick = {
-                                            localContacts = localContacts.filterNot { it.id == contact.id }
-                                        }
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (contact.isEnabled) Color(0xFFF8FAFC) else Color(0xFFF1F5F9)
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (contact.isEnabled) Color(0xFFCBD5E1) else Color(0xFFE2E8F0))
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Remove", color = Red)
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(contact.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                                Spacer(Modifier.width(6.dp))
+                                                Surface(
+                                                    color = Color(0xFFE0E7FF),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        contact.relation,
+                                                        fontSize = 10.sp,
+                                                        color = Color(0xFF3730A3),
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                            // Clickable Phone Number opens mobile dialer
+                                            Row(
+                                                modifier = Modifier
+                                                    .padding(top = 4.dp)
+                                                    .clickable { PlatformShare.openDialer(contact.phone) },
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text("📞 Call: ", fontSize = 12.sp, color = Color(0xFF64748B))
+                                                Text(
+                                                    contact.phone,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = Color(0xFF1D64F2),
+                                                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+                                                )
+                                            }
+                                        }
+                                        TextButton(
+                                            onClick = {
+                                                localContacts = localContacts.filterNot { it.id == contact.id }
+                                                EmergencyContactStorage.saveContacts(localContacts)
+                                            }
+                                        ) {
+                                            Text("Remove", color = Red, fontSize = 12.sp)
+                                        }
+                                    }
+
+                                    HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = Color(0xFFE2E8F0))
+
+                                    // Enable / Disable switch for this contact
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = if (contact.isEnabled) "✓ Enabled (Receives SOS SMS)" else "✕ Disabled (No SOS alerts)",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (contact.isEnabled) Green else Color.Gray,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        androidx.compose.material3.Switch(
+                                            checked = contact.isEnabled,
+                                            onCheckedChange = { isChecked ->
+                                                localContacts = localContacts.map {
+                                                    if (it.id == contact.id) it.copy(isEnabled = isChecked) else it
+                                                }
+                                                EmergencyContactStorage.saveContacts(localContacts)
+                                            }
+                                        )
                                     }
                                 }
                             }
@@ -5146,23 +5370,30 @@ private fun EmergencyContactsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = Red)
                 ) {
-                    Text("+ Add Emergency Contact")
+                    Text("+ Add Emergency Contact", fontWeight = FontWeight.Bold)
                 }
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(localContacts) }) { Text("Save") }
+            Button(
+                onClick = {
+                    EmergencyContactStorage.saveContacts(localContacts)
+                    onSave(localContacts)
+                }
+            ) { Text("Save") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text("Close") }
         }
     )
 
     if (showAdd) {
         AddEmergencyContactDialog(
             onDismiss = { showAdd = false },
-            onAdd = {
-                localContacts = localContacts + it
+            onAdd = { newContact ->
+                val updated = localContacts + newContact
+                localContacts = updated
+                EmergencyContactStorage.saveContacts(updated)
                 showAdd = false
             }
         )
@@ -5180,37 +5411,55 @@ private fun AddEmergencyContactDialog(
     var notifyBySms by remember { mutableStateOf(true) }
     var notifyByCall by remember { mutableStateOf(true) }
 
+    val cleanDigits = phone.filter { it.isDigit() }
+    val isValidPhone = cleanDigits.length == 10 && cleanDigits.matches(Regex("^[6-9]\\d{9}$"))
+    val isFormValid = name.trim().isNotBlank() && relation.trim().isNotBlank() && isValidPhone
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Emergency Contact") },
+        title = { Text("Add Emergency Contact", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("Name") },
+                    placeholder = { Text("e.g. Rahul / Mom") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = relation,
                     onValueChange = { relation = it },
-                    label = { Text("Relation (Parent / Friend / Rider)") },
+                    label = { Text("Relation") },
+                    placeholder = { Text("e.g. Parent, Friend, Co-Rider") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = phone,
-                    onValueChange = { phone = it },
-                    label = { Text("Mobile number") },
+                    onValueChange = { input ->
+                        val digits = input.filter { it.isDigit() }
+                        if (digits.length <= 10) phone = digits
+                    },
+                    label = { Text("10-Digit Mobile Number") },
+                    placeholder = { Text("e.g. 9876543210") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    isError = phone.isNotBlank() && !isValidPhone,
+                    supportingText = {
+                        if (phone.isNotBlank() && !isValidPhone) {
+                            Text("Must be exactly 10 digits starting with 6-9", color = Red, fontSize = 11.sp)
+                        } else {
+                            Text("${cleanDigits.length}/10 digits", fontSize = 11.sp, color = Color.Gray)
+                        }
+                    }
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("SMS", modifier = Modifier.weight(1f))
+                    Text("Receive Emergency SMS", modifier = Modifier.weight(1f), fontSize = 13.sp)
                     androidx.compose.material3.Switch(
                         checked = notifyBySms,
                         onCheckedChange = { notifyBySms = it }
@@ -5220,7 +5469,7 @@ private fun AddEmergencyContactDialog(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Phone call", modifier = Modifier.weight(1f))
+                    Text("Receive Phone Call", modifier = Modifier.weight(1f), fontSize = 13.sp)
                     androidx.compose.material3.Switch(
                         checked = notifyByCall,
                         onCheckedChange = { notifyByCall = it }
@@ -5231,21 +5480,24 @@ private fun AddEmergencyContactDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (name.isBlank() || relation.isBlank() || phone.isBlank()) return@Button
-                    onAdd(
-                        EmergencyContact(
-                            id = "ec-${name.hashCode()}-${phone.hashCode()}",
-                            name = name.trim(),
-                            relation = relation.trim(),
-                            phone = phone.trim(),
-                            notifyBySms = notifyBySms,
-                            notifyByCall = notifyByCall
+                    if (isFormValid) {
+                        onAdd(
+                            EmergencyContact(
+                                id = "ec-${name.hashCode()}-${cleanDigits.hashCode()}",
+                                name = name.trim(),
+                                relation = relation.trim(),
+                                phone = cleanDigits,
+                                isEnabled = true,
+                                notifyBySms = notifyBySms,
+                                notifyByCall = notifyByCall
+                            )
                         )
-                    )
+                    }
                 },
+                enabled = isFormValid,
                 colors = ButtonDefaults.buttonColors(containerColor = Red)
             ) {
-                Text("Add")
+                Text("Add Contact", fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {

@@ -208,7 +208,7 @@ fun LiveGoogleMapView(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .then(if (isFullscreen) Modifier.statusBarsPadding().padding(top = 8.dp) else Modifier.padding(top = 8.dp))
+                    .then(if (isFullscreen) Modifier.statusBarsPadding().padding(top = 28.dp) else Modifier.padding(top = 8.dp))
                     .padding(horizontal = 10.dp),
                 shape = RoundedCornerShape(14.dp),
                 color = if (darkMode) Color(0xFF1E293B) else Color.White,

@@ -22,4 +22,15 @@ actual object PlatformShare {
             ctx.startActivity(shareIntent)
         } catch (_: Exception) {}
     }
+
+    actual fun openDialer(phoneNumber: String) {
+        val ctx = appContext ?: return
+        try {
+            val clean = phoneNumber.filter { it.isDigit() || it == '+' }
+            val intent = Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:$clean")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            ctx.startActivity(intent)
+        } catch (_: Exception) {}
+    }
 }
