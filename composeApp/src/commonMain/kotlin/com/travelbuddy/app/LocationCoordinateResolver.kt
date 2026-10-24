@@ -1,5 +1,7 @@
 package com.travelbuddy.app
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.*
 
 /**
@@ -7,6 +9,27 @@ import kotlin.math.*
  * Provides accurate coordinates and road travel distance for source and destination routing.
  */
 object LocationCoordinateResolver {
+
+    private val resolvedCoordsCache = mutableMapOf<String, Pair<Double, Double>>()
+
+    /**
+     * Resolves the exact street address for live GPS coordinates on a background thread
+     * (never blocks the UI and never returns a stale "nearby" address).
+     */
+    suspend fun exactAddressFor(latitude: Double, longitude: Double): String = withContext(Dispatchers.Default) {
+        if (latitude == 0.0 && longitude == 0.0) return@withContext "Current Location"
+        val geocoded = try { PlatformLocation.reverseGeocode(latitude, longitude) } catch (_: Exception) { null }
+        if (!geocoded.isNullOrBlank()) geocoded
+        else "Pinpoint Location (${round(latitude * 100000.0) / 100000.0}, ${round(longitude * 100000.0) / 100000.0})"
+    }
+
+    /** Background-thread version of [resolveCoordinates] for use from composables. */
+    suspend fun resolveCoordinatesAsync(cityName: String, fallbackLat: Double = 0.0, fallbackLng: Double = 0.0): Pair<Double, Double> =
+        withContext(Dispatchers.Default) { resolveCoordinates(cityName, fallbackLat, fallbackLng) }
+
+    /** Background-thread version of [calculateRoadDistanceKm]. */
+    suspend fun calculateRoadDistanceKmAsync(sourceName: String, destinationName: String): Double =
+        withContext(Dispatchers.Default) { calculateRoadDistanceKm(sourceName, destinationName) }
 
     private val cityCoordinates: Map<String, Pair<Double, Double>> = mapOf(
         // Karnataka
@@ -33,6 +56,14 @@ object LocationCoordinateResolver {
         "domlur" to Pair(12.9609, 77.6387),
         "kalyan nagar" to Pair(13.0280, 77.6420),
         "bidar" to Pair(17.9104, 77.5199),
+        "mangalagi" to Pair(17.7816, 77.1336),
+        "humanabad" to Pair(17.7714, 77.1306),
+        "humnabad" to Pair(17.7714, 77.1306),
+        "kalaburagi" to Pair(17.3297, 76.8343),
+        "gulbarga" to Pair(17.3297, 76.8343),
+        "zaheerabad" to Pair(17.6814, 77.6074),
+        "basavakalyan" to Pair(17.8736, 76.9497),
+        "bhalki" to Pair(18.0468, 77.2111),
         "coorg" to Pair(12.4244, 75.7382),
         "coorg valley" to Pair(12.4244, 75.7382),
         "madikeri" to Pair(12.4244, 75.7382),
@@ -152,12 +183,12 @@ object LocationCoordinateResolver {
                 lower == "start"
 
         if (isGenericDefault) {
+            if (fallbackLat != 0.0 && fallbackLng != 0.0) {
+                return Pair(fallbackLat, fallbackLng)
+            }
             val live = PlatformLocation.getCurrentLocation()
             if (live != null && live.latitude != 0.0) {
                 return Pair(live.latitude, live.longitude)
-            }
-            if (fallbackLat != 0.0 && fallbackLng != 0.0) {
-                return Pair(fallbackLat, fallbackLng)
             }
         }
 
@@ -172,33 +203,61 @@ object LocationCoordinateResolver {
             }
         }
 
-        // 3. Real Geocoding (Google Geocoder on Android / Nominatim: resolves exact home, street, building, or copy-pasted address)
+        // 3. Check in-memory cache first (0ms)
+        resolvedCoordsCache[lower]?.let { cached ->
+            if (fallbackLat != 0.0 && fallbackLng != 0.0 &&
+                haversineDistanceKm(fallbackLat, fallbackLng, cached.first, cached.second) < 35.0
+            ) {
+                return Pair(fallbackLat, fallbackLng)
+            }
+            return cached
+        }
+
+        // 4. Find any matching known city/locality coordinate (0ms)
+        val matchedKnownCoords: Pair<Double, Double>? = cityCoordinates[lower]
+            ?: run {
+                val tokens = lower.split(',', '-', ';', ' ', '/').map { it.trim() }.filter { it.length >= 3 }
+                tokens.firstNotNullOfOrNull { cityCoordinates[it] }
+            }
+            ?: cityCoordinates.entries.firstOrNull { (name, _) ->
+                lower.contains(name) || name.contains(lower)
+            }?.value
+
+        // If caller supplied live GPS coordinates within the same city/locality (< 35 km),
+        // always preserve the user's exact pinpoint GPS instead of snapping to a neighborhood center.
+        if (matchedKnownCoords != null && fallbackLat != 0.0 && fallbackLng != 0.0) {
+            val distKm = haversineDistanceKm(fallbackLat, fallbackLng, matchedKnownCoords.first, matchedKnownCoords.second)
+            if (distKm < 35.0) {
+                return Pair(fallbackLat, fallbackLng)
+            }
+        }
+
+        // If it's an exact single city name (like "Hyderabad" or "Mysuru") and not the user's current city, return immediately
+        if (cityCoordinates.containsKey(lower) && matchedKnownCoords != null) {
+            resolvedCoordsCache[lower] = matchedKnownCoords
+            return matchedKnownCoords
+        }
+
+        // 5. Real Geocoding on background thread (PlatformLocation.geocodeAddress returns null immediately if on UI thread)
         try {
             val geocoded = PlatformLocation.geocodeAddress(clean)
             if (geocoded != null && geocoded.first != 0.0) {
+                resolvedCoordsCache[lower] = geocoded
+                if (fallbackLat != 0.0 && fallbackLng != 0.0 &&
+                    haversineDistanceKm(fallbackLat, fallbackLng, geocoded.first, geocoded.second) < 25.0 &&
+                    clean.split(",").size <= 3
+                ) {
+                    return Pair(fallbackLat, fallbackLng)
+                }
                 return geocoded
             }
         } catch (_: Exception) {}
 
-        // 4. Direct match in dictionary
-        cityCoordinates[lower]?.let { return it }
-
-        // 5. Comma-separated address token match
-        val tokens = lower.split(',', '-', ';', ' ', '/').map { it.trim() }.filter { it.length >= 3 }
-        for (token in tokens) {
-            cityCoordinates[token]?.let { return it }
-        }
-
-        // 6. Substring / contains match
-        for ((name, coords) in cityCoordinates) {
-            if (lower.contains(name) || name.contains(lower)) {
-                return coords
-            }
-        }
-
-        // 7. If coordinates or fallback provided, use them
-        if (fallbackLat != 0.0 && fallbackLng != 0.0) {
-            return Pair(fallbackLat, fallbackLng)
+        // 6. If matchedKnownCoords is in another city (e.g. "Mangalagi, Humanabad taluku" when user is in Bengaluru),
+        //    return that city's coordinates so remote trip start/destination never jumps to the viewer's city.
+        if (matchedKnownCoords != null) {
+            resolvedCoordsCache[lower] = matchedKnownCoords
+            return matchedKnownCoords
         }
 
         return Pair(fallbackLat, fallbackLng)

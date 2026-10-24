@@ -292,20 +292,23 @@ public class TravelBuddyStateService {
         return msg;
     }
 
-    private double[] parseSourceCoordinates(String source) {
+    private double[] parseSourceCoordinates(String source, Double reqLat, Double reqLng) {
+        if (reqLat != null && reqLng != null && reqLat != 0.0 && reqLng != 0.0) {
+            return new double[]{reqLat, reqLng};
+        }
         if (source != null && !source.isBlank()) {
             java.util.regex.Matcher m = java.util.regex.Pattern.compile("(-?\\d{1,3}\\.\\d+)[,\\s/]+(-?\\d{1,3}\\.\\d+)").matcher(source);
             if (m.find()) {
                 try {
                     double lat = Double.parseDouble(m.group(1));
                     double lng = Double.parseDouble(m.group(2));
-                    if (lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0) {
+                    if (lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0 && (lat != 0.0 || lng != 0.0)) {
                         return new double[]{lat, lng};
                     }
                 } catch (Exception ignored) {}
             }
         }
-        return new double[]{12.9716, 77.5946};
+        return null;
     }
 
     // --- TRIPS ---
@@ -315,7 +318,9 @@ public class TravelBuddyStateService {
                 : "trip-" + UUID.randomUUID().toString().substring(0, 8);
         String code = "TRIP-" + (1000 + codeGenerator.incrementAndGet() % 9000);
 
-        double[] coords = parseSourceCoordinates(req.source());
+        double[] coords = parseSourceCoordinates(req.source(), req.sourceLat(), req.sourceLng());
+        Double initLat = coords != null ? coords[0] : null;
+        Double initLng = coords != null ? coords[1] : null;
         List<TripMember> members = new ArrayList<>();
         long[] colors = {0xFF1A73E8L, 0xFFE91E63L, 0xFFFF9800L, 0xFF9C27B0L, 0xFF00897BL, 0xFF7CB342L};
         int idx = 0;
@@ -328,8 +333,8 @@ public class TravelBuddyStateService {
                     mName,
                     colors[idx % colors.length],
                     true,
-                    coords[0],
-                    coords[1],
+                    idx == 0 ? initLat : null,
+                    idx == 0 ? initLng : null,
                     0.0,
                     100,
                     System.currentTimeMillis()
@@ -434,6 +439,10 @@ public class TravelBuddyStateService {
     }
 
     public Optional<Trip> joinTripByCode(String code, String userId, String userName) {
+        return joinTripByCode(code, userId, userName, null, null);
+    }
+
+    public Optional<Trip> joinTripByCode(String code, String userId, String userName, Double latitude, Double longitude) {
         String cleanCode = code != null ? code.trim() : "";
         String tripId = resolveTripId(cleanCode);
         Trip trip = trips.get(tripId);
@@ -441,6 +450,8 @@ public class TravelBuddyStateService {
 
         String normUserName = (userName != null && !userName.isBlank()) ? userName.trim() : "Traveler";
         String normUserId = (userId != null && !userId.isBlank()) ? userId.trim() : normUserName;
+        Double validLat = (latitude != null && latitude != 0.0) ? latitude : null;
+        Double validLng = (longitude != null && longitude != 0.0) ? longitude : null;
 
         boolean exists = trip.members().stream().anyMatch(m ->
                 m.name().equalsIgnoreCase(normUserName) || m.id().equalsIgnoreCase(normUserId) ||
@@ -454,8 +465,8 @@ public class TravelBuddyStateService {
                     normUserName,
                     colors[updatedMembers.size() % colors.length],
                     true,
-                    null,
-                    null,
+                    validLat,
+                    validLng,
                     0.0,
                     100,
                     System.currentTimeMillis()
@@ -491,6 +502,42 @@ public class TravelBuddyStateService {
                 webSocketBroadcastListener.accept(json);
             }
 
+            return Optional.of(updatedTrip);
+        } else if (validLat != null && validLng != null) {
+            List<TripMember> updatedMembers = new ArrayList<>();
+            for (TripMember m : trip.members()) {
+                if (m.name().equalsIgnoreCase(normUserName) || m.id().equalsIgnoreCase(normUserId) ||
+                        m.name().equalsIgnoreCase(normUserId) || m.id().equalsIgnoreCase(normUserName)) {
+                    updatedMembers.add(new TripMember(
+                            m.id(),
+                            m.name(),
+                            m.color(),
+                            true,
+                            validLat,
+                            validLng,
+                            m.speedKmh() != null ? m.speedKmh() : 0.0,
+                            m.batteryPercent() != null ? m.batteryPercent() : 100,
+                            System.currentTimeMillis()
+                    ));
+                } else {
+                    updatedMembers.add(m);
+                }
+            }
+            Trip updatedTrip = new Trip(
+                    trip.id(),
+                    trip.name(),
+                    trip.source(),
+                    trip.destination(),
+                    trip.dates(),
+                    trip.status(),
+                    trip.tripCode(),
+                    trip.createdBy(),
+                    trip.coverImage(),
+                    updatedMembers,
+                    trip.createdAt(),
+                    trip.vehicleType()
+            );
+            trips.put(tripId, updatedTrip);
             return Optional.of(updatedTrip);
         }
         return Optional.of(trip);

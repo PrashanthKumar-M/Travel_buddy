@@ -102,41 +102,53 @@ fun LiveGoogleMapView(
     // Live GPS coordinates from platform location provider
     val realLocationState = remember { mutableStateOf(PlatformLocation.getCurrentLocation()) }
     DisposableEffect(Unit) {
-        PlatformLocation.startLocationUpdates { updated ->
+        val listener: (RealLocation) -> Unit = { updated ->
             realLocationState.value = updated
         }
+        PlatformLocation.startLocationUpdates(listener)
         onDispose {
-            PlatformLocation.stopLocationUpdates()
+            PlatformLocation.removeLocationListener(listener)
         }
     }
 
     val activeUserLat = when {
-        currentUserLat != 0.0 -> currentUserLat
         realLocationState.value != null && realLocationState.value!!.latitude != 0.0 -> realLocationState.value!!.latitude
+        currentUserLat != 0.0 -> currentUserLat
         PlatformLocation.getCurrentLocation() != null && PlatformLocation.getCurrentLocation()!!.latitude != 0.0 -> PlatformLocation.getCurrentLocation()!!.latitude
         else -> 0.0
     }
     val activeUserLng = when {
-        currentUserLng != 0.0 -> currentUserLng
         realLocationState.value != null && realLocationState.value!!.longitude != 0.0 -> realLocationState.value!!.longitude
+        currentUserLng != 0.0 -> currentUserLng
         PlatformLocation.getCurrentLocation() != null && PlatformLocation.getCurrentLocation()!!.longitude != 0.0 -> PlatformLocation.getCurrentLocation()!!.longitude
         else -> 0.0
     }
 
-    // Coordinate resolution
-    val (resolvedSrcLat, resolvedSrcLng) = remember(sourceName, sourceLat, sourceLng, activeUserLat, activeUserLng) {
-        if (sourceLat != 0.0 && sourceLng != 0.0) {
-            Pair(sourceLat, sourceLng)
-        } else if (sourceName.isBlank() || sourceName == "Starting Point" || sourceName.contains("12.9716")) {
-            if (activeUserLat != 0.0 && activeUserLng != 0.0) {
+    // Coordinate resolution (fast initial + async background refinement so UI never blocks)
+    var resolvedSrc by remember(sourceName, sourceLat, sourceLng, activeUserLat, activeUserLng) {
+        mutableStateOf(
+            if (sourceLat != 0.0 && sourceLng != 0.0) {
+                Pair(sourceLat, sourceLng)
+            } else if (activeUserLat != 0.0 && activeUserLng != 0.0) {
                 Pair(activeUserLat, activeUserLng)
             } else {
                 LocationCoordinateResolver.resolveCoordinates(sourceName)
             }
-        } else {
-            LocationCoordinateResolver.resolveCoordinates(sourceName, activeUserLat, activeUserLng)
+        )
+    }
+    LaunchedEffect(sourceName, sourceLat, sourceLng, activeUserLat, activeUserLng) {
+        if (sourceLat != 0.0 && sourceLng != 0.0) {
+            resolvedSrc = Pair(sourceLat, sourceLng)
+        } else if (sourceName.isNotBlank() && sourceName != "Starting Point" && !sourceName.equals("Current Location", ignoreCase = true)) {
+            val asyncCoords = LocationCoordinateResolver.resolveCoordinatesAsync(sourceName, activeUserLat, activeUserLng)
+            if (asyncCoords.first != 0.0 && asyncCoords.second != 0.0) {
+                resolvedSrc = asyncCoords
+            }
+        } else if (activeUserLat != 0.0 && activeUserLng != 0.0) {
+            resolvedSrc = Pair(activeUserLat, activeUserLng)
         }
     }
+    val (resolvedSrcLat, resolvedSrcLng) = resolvedSrc
 
     val hasValidDestination = remember(destinationName) {
         destinationName.isNotBlank() &&
@@ -146,21 +158,40 @@ fun LiveGoogleMapView(
             !destinationName.equals(sourceName, ignoreCase = true)
     }
 
-    val (resolvedDstLat, resolvedDstLng) = remember(destinationName, destinationLat, destinationLng, hasValidDestination) {
-        if (hasValidDestination) {
-            LocationCoordinateResolver.resolveCoordinates(destinationName, destinationLat, destinationLng)
+    var resolvedDst by remember(destinationName, destinationLat, destinationLng, hasValidDestination) {
+        mutableStateOf(
+            if (!hasValidDestination) Pair(0.0, 0.0)
+            else if (destinationLat != 0.0 && destinationLng != 0.0) Pair(destinationLat, destinationLng)
+            else LocationCoordinateResolver.resolveCoordinates(destinationName, destinationLat, destinationLng)
+        )
+    }
+    LaunchedEffect(destinationName, destinationLat, destinationLng, hasValidDestination) {
+        if (!hasValidDestination) {
+            resolvedDst = Pair(0.0, 0.0)
+        } else if (destinationLat != 0.0 && destinationLng != 0.0) {
+            resolvedDst = Pair(destinationLat, destinationLng)
         } else {
-            Pair(0.0, 0.0)
+            val asyncDst = LocationCoordinateResolver.resolveCoordinatesAsync(destinationName, destinationLat, destinationLng)
+            if (asyncDst.first != 0.0 && asyncDst.second != 0.0) {
+                resolvedDst = asyncDst
+            }
         }
     }
+    val (resolvedDstLat, resolvedDstLng) = resolvedDst
 
-    val totalDistance = remember(sourceName, destinationName, resolvedSrcLat, resolvedDstLat, hasValidDestination) {
-        if (hasValidDestination) {
-            LocationCoordinateResolver.calculateRoadDistanceKm(sourceName, destinationName)
+    val totalDistance = remember(resolvedSrcLat, resolvedSrcLng, resolvedDstLat, resolvedDstLng, hasValidDestination) {
+        if (hasValidDestination && resolvedSrcLat != 0.0 && resolvedDstLat != 0.0) {
+            val directKm = haversineDistanceKm(resolvedSrcLat, resolvedSrcLng, resolvedDstLat, resolvedDstLng)
+            val factor = when {
+                directKm > 500.0 -> 1.25
+                directKm > 100.0 -> 1.22
+                else -> 1.18
+            }
+            ((directKm * factor) * 10.0).roundToInt() / 10.0
         } else 0.0
     }
     val drivingEta = remember(totalDistance, hasValidDestination) {
-        if (hasValidDestination) {
+        if (hasValidDestination && totalDistance > 0.0) {
             LocationCoordinateResolver.calculateDrivingEta(totalDistance)
         } else ""
     }
@@ -238,14 +269,17 @@ fun LiveGoogleMapView(
                             )
                         }
                         Spacer(Modifier.height(2.dp))
-                        val cleanSrc = sourceName.substringBefore("(").trim().ifBlank { sourceName.trim() }
+                        val liveAddr = realLocationState.value?.address
+                        val rawSrc = sourceName.substringBefore("(").trim().ifBlank { sourceName.trim() }
+                        val cleanSrc = if (rawSrc.isBlank() || rawSrc.equals("Starting Point", ignoreCase = true) || rawSrc.equals("Current Location", ignoreCase = true)) {
+                            liveAddr?.substringBefore(",")?.trim()?.ifBlank { "Live Location" } ?: "Live Location"
+                        } else rawSrc
                         val cleanDst = destinationName.substringBefore("(").trim().ifBlank { destinationName.trim() }
                         Text(
                             text = if (hasValidDestination) {
                                 "$cleanSrc ➔ $cleanDst"
                             } else {
-                                val locAddr = realLocationState.value?.address
-                                if (!locAddr.isNullOrBlank()) locAddr
+                                if (!liveAddr.isNullOrBlank()) liveAddr
                                 else if (cleanSrc.isNotBlank() && cleanSrc != "Starting Point") cleanSrc
                                 else "Live Location Active"
                             },

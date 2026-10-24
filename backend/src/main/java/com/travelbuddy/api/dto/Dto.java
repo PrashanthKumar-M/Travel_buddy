@@ -28,18 +28,31 @@ public class Dto {
             String createdBy,
             String coverImage,
             List<String> members,
-            String vehicleType
+            String vehicleType,
+            Double sourceLat,
+            Double sourceLng,
+            Double destLat,
+            Double destLng
     ) {
         public CreateTripRequest(String id, String tripName, String source, String destination, String dates, String createdBy, String coverImage, List<String> members) {
-            this(id, tripName, source, destination, dates, createdBy, coverImage, members, "CAR");
+            this(id, tripName, source, destination, dates, createdBy, coverImage, members, "CAR", 0.0, 0.0, 0.0, 0.0);
+        }
+        public CreateTripRequest(String id, String tripName, String source, String destination, String dates, String createdBy, String coverImage, List<String> members, String vehicleType) {
+            this(id, tripName, source, destination, dates, createdBy, coverImage, members, vehicleType, 0.0, 0.0, 0.0, 0.0);
         }
     }
 
     public record JoinTripRequest(
             String tripCode,
             String userId,
-            String userName
-    ) {}
+            String userName,
+            Double latitude,
+            Double longitude
+    ) {
+        public JoinTripRequest(String tripCode, String userId, String userName) {
+            this(tripCode, userId, userName, null, null);
+        }
+    }
 
     public record LocationUpdateRequest(
             String tripId,

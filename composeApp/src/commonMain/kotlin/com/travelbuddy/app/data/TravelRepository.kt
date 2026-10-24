@@ -50,12 +50,18 @@ data class TravelApiConfig(
     val createdBy: String = "usr-1",
     val coverImage: String? = null,
     val members: List<String> = emptyList(),
-    val vehicleType: String = "CAR"
+    val vehicleType: String = "CAR",
+    val sourceLat: Double = 0.0,
+    val sourceLng: Double = 0.0,
+    val destLat: Double = 0.0,
+    val destLng: Double = 0.0
 )
 @Serializable data class JoinTripRequest(
     val tripCode: String,
     val userId: String = "usr-1",
-    val userName: String = "Traveler"
+    val userName: String = "Traveler",
+    val latitude: Double? = null,
+    val longitude: Double? = null
 )
 @Serializable data class LocationUpdateRequest(
     val tripId: String,

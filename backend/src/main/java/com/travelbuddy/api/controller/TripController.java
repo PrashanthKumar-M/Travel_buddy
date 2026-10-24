@@ -64,7 +64,7 @@ public class TripController {
 
     @PostMapping("/join")
     public ResponseEntity<?> joinTripByCode(@RequestBody JoinTripRequest request) {
-        return stateService.joinTripByCode(request.tripCode(), request.userId(), request.userName())
+        return stateService.joinTripByCode(request.tripCode(), request.userId(), request.userName(), request.latitude(), request.longitude())
                 .map(trip -> ResponseEntity.ok(Map.of(
                         "success", true,
                         "message", "Successfully joined trip: " + trip.name(),

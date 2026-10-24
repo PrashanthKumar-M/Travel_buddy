@@ -64,7 +64,18 @@ actual fun NativeGoogleMapView(
     var lastRenderKey by remember { mutableStateOf("") }
 
     val mapView = remember {
-        MapView(context).apply {
+        object : MapView(context) {
+            override fun dispatchTouchEvent(ev: android.view.MotionEvent?): Boolean {
+                when (ev?.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN,
+                    android.view.MotionEvent.ACTION_MOVE,
+                    android.view.MotionEvent.ACTION_POINTER_DOWN -> parent?.requestDisallowInterceptTouchEvent(true)
+                    android.view.MotionEvent.ACTION_UP,
+                    android.view.MotionEvent.ACTION_CANCEL -> parent?.requestDisallowInterceptTouchEvent(false)
+                }
+                return super.dispatchTouchEvent(ev)
+            }
+        }.apply {
             onCreate(Bundle())
         }
     }
@@ -127,9 +138,10 @@ actual fun NativeGoogleMapView(
                                 map.setOnMyLocationChangeListener { myLoc ->
                                     if (myLoc != null && myLoc.latitude != 0.0) {
                                         PlatformLocation.updateManualLocation(
-                                            myLoc.latitude,
-                                            myLoc.longitude,
-                                            if (myLoc.hasSpeed()) (myLoc.speed * 3.6) else 0.0
+                                            latitude = myLoc.latitude,
+                                            longitude = myLoc.longitude,
+                                            speedKmh = if (myLoc.hasSpeed()) (myLoc.speed * 3.6) else 0.0,
+                                            accuracyMeters = if (myLoc.hasAccuracy()) myLoc.accuracy else 25f
                                         )
                                     }
                                 }
@@ -354,18 +366,26 @@ private fun renderGoogleMapContent(
     // 1. Determine authentic live GPS location of this device
     val liveLoc = PlatformLocation.getCurrentLocation()
     val mapLoc = try { map.myLocation } catch (_: Exception) { null }
+    if (liveLoc == null && mapLoc != null && mapLoc.latitude != 0.0) {
+        PlatformLocation.updateManualLocation(
+            latitude = mapLoc.latitude,
+            longitude = mapLoc.longitude,
+            speedKmh = if (mapLoc.hasSpeed()) (mapLoc.speed * 3.6) else 0.0,
+            accuracyMeters = if (mapLoc.hasAccuracy()) mapLoc.accuracy else 25f
+        )
+    }
 
     val effectiveUserLat = when {
-        currLat != 0.0 -> currLat
         liveLoc != null && liveLoc.latitude != 0.0 -> liveLoc.latitude
         mapLoc != null && mapLoc.latitude != 0.0 -> mapLoc.latitude
+        currLat != 0.0 -> currLat
         else -> srcLat
     }
 
     val effectiveUserLng = when {
-        currLng != 0.0 -> currLng
         liveLoc != null && liveLoc.longitude != 0.0 -> liveLoc.longitude
         mapLoc != null && mapLoc.longitude != 0.0 -> mapLoc.longitude
+        currLng != 0.0 -> currLng
         else -> srcLng
     }
 
@@ -392,20 +412,20 @@ private fun renderGoogleMapContent(
         (dstLat != 0.0 || dstLng != 0.0) &&
         (effectiveSrcLat != dstLat || effectiveSrcLng != dstLng)
 
-    // Resolved city names without raw decimals:
-    val resolvedStartName = if (srcName.isBlank() || srcName.equals("Starting Point", ignoreCase = true) || srcName.matches(Regex(""".*\d+\.\d+.*"""))) {
-        LocationCoordinateResolver.resolveNearestCityOrArea(effectiveSrcLat, effectiveSrcLng)
+    // Resolved city/area name without blocking UI thread:
+    val resolvedStartName = if (srcName.isBlank() || srcName.equals("Starting Point", ignoreCase = true) || srcName.equals("Current Location", ignoreCase = true) || srcName.matches(Regex(""".*\d+\.\d+.*"""))) {
+        liveLoc?.address?.takeIf { it.isNotBlank() } ?: "Live Start"
     } else {
         srcName
     }
     val startCity = resolvedStartName.split(",").firstOrNull()?.trim() ?: "Start"
 
-    // Deduplicate members so each user appears once
+    // Deduplicate members so each user appears once (merging live GPS coordinates)
     val cleanMembers = deduplicateMemberList(members)
 
     // 1. Start Callout Marker - only show if user has moved away from start (> 300m) or no members
     val distUserToStartKm = haversineDistanceKm(effectiveUserLat, effectiveUserLng, effectiveSrcLat, effectiveSrcLng)
-    if (distUserToStartKm > 0.3 || cleanMembers.isEmpty()) {
+    if ((effectiveSrcLat != 0.0 || effectiveSrcLng != 0.0) && (distUserToStartKm > 0.3 || cleanMembers.isEmpty())) {
         map.addMarker(
             MarkerOptions()
                 .position(actualSrcLatLng)
@@ -429,35 +449,56 @@ private fun renderGoogleMapContent(
         hasPoints = true
 
         // 3. Main Route Polyline: from trip starting point to destination
-        map.addPolyline(
-            PolylineOptions()
-                .add(actualSrcLatLng, dstLatLng)
-                .width(12f)
-                .color(android.graphics.Color.parseColor("#1A73E8"))
-                .geodesic(true)
-        )
+        if (effectiveSrcLat != 0.0 || effectiveSrcLng != 0.0) {
+            map.addPolyline(
+                PolylineOptions()
+                    .add(actualSrcLatLng, dstLatLng)
+                    .width(12f)
+                    .color(android.graphics.Color.parseColor("#1A73E8"))
+                    .geodesic(true)
+            )
+        }
     }
 
     // 4. Multi-User Tracking along the Route (Real GPS locations)
     val travelerColors = listOf(
-        "#1A73E8", // Blue for You / User 1
-        "#E91E63", // Pink for Netra / User 2
-        "#FF9800", // Orange for Karuna / User 3
-        "#9C27B0", // Purple for Divakar / User 4
-        "#00897B", // Teal for User 5
-        "#7CB342"  // Green for User 6
+        "#1A73E8", // Blue for Leader / User 1
+        "#E91E63", // Pink for Member 2
+        "#FF9800", // Orange for Member 3
+        "#9C27B0", // Purple for Member 4
+        "#00897B", // Teal for Member 5
+        "#7CB342"  // Green for Member 6
     )
 
     // Calculate real positions using authentic device and server GPS
     val travelerPositions = mutableListOf<Pair<TripMember, LatLng>>()
 
     val mySessionName = SessionManager.getUserName().trim().lowercase().substringBefore("@")
+    val mySessionId = SessionManager.getUserId().trim().lowercase()
+    val mySessionIdent = SessionManager.getUserIdentifier().trim().lowercase().substringBefore("@")
+
+    // Identify AT MOST ONE member entry as the local user ("You") so two members never collapse onto the same point
+    val exactMyIdx = cleanMembers.indexOfFirst { m ->
+        val mName = m.name.trim().lowercase().substringBefore("@")
+        val mId = m.id.trim().lowercase().substringBefore("@")
+        (mySessionName.isNotBlank() && (mName == mySessionName || mId == mySessionName)) ||
+            (mySessionIdent.isNotBlank() && (mName == mySessionIdent || mId == mySessionIdent)) ||
+            (mySessionId.isNotBlank() && (mId == mySessionId || mName == mySessionId))
+    }
+    val myMemberIndex = if (exactMyIdx >= 0) {
+        exactMyIdx
+    } else {
+        val partialIdx = cleanMembers.indexOfFirst { m ->
+            val mName = m.name.trim().lowercase().substringBefore("@")
+            mySessionName.length >= 3 && mName.length >= 3 && (mName.contains(mySessionName) || mySessionName.contains(mName))
+        }
+        if (partialIdx >= 0) partialIdx else if (cleanMembers.size == 1) 0 else -1
+    }
 
     cleanMembers.forEachIndexed { index, member ->
         val rawLat = member.latitude
         val rawLng = member.longitude
-        val memberName = member.name.trim().lowercase().substringBefore("@")
-        val isYou = (mySessionName.isNotBlank() && (memberName == mySessionName || memberName.contains(mySessionName) || mySessionName.contains(memberName))) || (index == 0 && mySessionName.isBlank())
+        val isYou = (index == myMemberIndex)
 
         // Authentic GPS positioning:
         val latLng: LatLng? = if (isYou) {
@@ -470,8 +511,9 @@ private fun renderGoogleMapContent(
             }
         } else if (rawLat != null && rawLng != null && rawLat != 0.0 && rawLng != 0.0) {
             LatLng(rawLat, rawLng)
+        } else if (index == 0 && (effectiveSrcLat != 0.0 || effectiveSrcLng != 0.0)) {
+            LatLng(effectiveSrcLat, effectiveSrcLng)
         } else {
-            // Do NOT place remote co-travelers into Bengaluru or at fake offsets:
             null
         }
 
@@ -497,38 +539,40 @@ private fun renderGoogleMapContent(
                     )
                 )
                 .anchor(0.5f, 0.95f)
+                .zIndex(if (isYou) 20f else 15f)
         )
     }
 
-    // 5. High-visibility Vibrant Blue Live Tracking Polyline Connecting Co-Travelers with Distance Labels
+    // 5. High-visibility Vibrant Blue Live Tracking Polyline Connecting Leader & Members with Distance Labels
     if (travelerPositions.size >= 2) {
-        for (i in 0 until travelerPositions.size - 1) {
-            val p1 = travelerPositions[i].second
-            val p2 = travelerPositions[i + 1].second
-
-            val distKm = haversineDistanceKm(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
+        val leaderPos = travelerPositions.first().second
+        for (i in 1 until travelerPositions.size) {
+            val memberPos = travelerPositions[i].second
+            val distKm = haversineDistanceKm(leaderPos.latitude, leaderPos.longitude, memberPos.latitude, memberPos.longitude)
 
             // Outer glow line for crisp contrast
             map.addPolyline(
                 PolylineOptions()
-                    .add(p1, p2)
-                    .width(10f)
+                    .add(leaderPos, memberPos)
+                    .width(14f)
                     .color(android.graphics.Color.parseColor("#4285F4")) // Soft Google Blue halo
                     .geodesic(true)
+                    .zIndex(8f)
             )
 
-            // Inner solid vibrant blue route line
+            // Inner solid vibrant blue route line connecting Leader and Member
             map.addPolyline(
                 PolylineOptions()
-                    .add(p1, p2)
-                    .width(6f)
+                    .add(leaderPos, memberPos)
+                    .width(8f)
                     .color(android.graphics.Color.parseColor("#1A73E8")) // Google Maps Primary Blue
                     .geodesic(true)
+                    .zIndex(9f)
             )
 
             // Midpoint distance badge (e.g. 5.2 km)
-            val midLat = (p1.latitude + p2.latitude) / 2.0
-            val midLng = (p1.longitude + p2.longitude) / 2.0
+            val midLat = (leaderPos.latitude + memberPos.latitude) / 2.0
+            val midLng = (leaderPos.longitude + memberPos.longitude) / 2.0
             val midLatLng = LatLng(midLat, midLng)
 
             map.addMarker(
@@ -536,6 +580,7 @@ private fun renderGoogleMapContent(
                     .position(midLatLng)
                     .icon(createDistanceLabelBitmap(distKm, density))
                     .anchor(0.5f, 0.5f)
+                    .zIndex(12f)
             )
         }
     }
@@ -783,7 +828,8 @@ private fun createCalloutMarkerBitmap(
 }
 
 /**
- * Deduplicates trip members by normalized username or ID so each user only appears ONCE.
+ * Deduplicates trip members by normalized username or ID so each user only appears ONCE,
+ * merging live GPS coordinates if a duplicate entry holds the latest fix.
  */
 private fun deduplicateMemberList(members: List<TripMember>): List<TripMember> {
     val seen = mutableSetOf<String>()
@@ -793,6 +839,24 @@ private fun deduplicateMemberList(members: List<TripMember>): List<TripMember> {
         val key = if (cleanName.isNotBlank()) cleanName else m.id.trim().lowercase()
         if (seen.add(key)) {
             result.add(m)
+        } else {
+            val idx = result.indexOfFirst {
+                val n = it.name.trim().lowercase().substringBefore("@")
+                (if (n.isNotBlank()) n else it.id.trim().lowercase()) == key
+            }
+            if (idx >= 0) {
+                val kept = result[idx]
+                val keptHasGps = kept.latitude != null && kept.longitude != null && kept.latitude != 0.0
+                val dupHasGps = m.latitude != null && m.longitude != null && m.latitude != 0.0
+                if (!keptHasGps && dupHasGps) {
+                    result[idx] = kept.copy(
+                        latitude = m.latitude,
+                        longitude = m.longitude,
+                        speedKmh = m.speedKmh ?: kept.speedKmh,
+                        batteryPercent = m.batteryPercent ?: kept.batteryPercent
+                    )
+                }
+            }
         }
     }
     return result

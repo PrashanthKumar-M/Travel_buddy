@@ -1,5 +1,7 @@
 package com.travelbuddy.app.data
 
+import com.travelbuddy.app.PlatformBattery
+import com.travelbuddy.app.PlatformLocation
 import com.travelbuddy.app.domain.Expense
 import com.travelbuddy.app.domain.Settlement
 import com.travelbuddy.app.domain.Trip
@@ -57,7 +59,52 @@ class KtorTravelRepository(
             setBody(request)
         }
         response.requireSuccess()
-        response.bodyAsText().toTripOrFallback(request)
+        val created = response.bodyAsText().toTripOrFallback(request)
+
+        // Immediately push creator's authentic live GPS coordinates so the server never keeps a default/Bengaluru pin
+        val live = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
+        val initLat = when {
+            live != null && live.latitude != 0.0 -> live.latitude
+            request.sourceLat != 0.0 -> request.sourceLat
+            else -> 0.0
+        }
+        val initLng = when {
+            live != null && live.longitude != 0.0 -> live.longitude
+            request.sourceLng != 0.0 -> request.sourceLng
+            else -> 0.0
+        }
+        val initSpeed = live?.speedKmh ?: 0.0
+        val initBattery = PlatformBattery.getBatteryLevel()
+
+        if (initLat != 0.0 && initLng != 0.0) {
+            runCatching {
+                updateLocation(
+                    LocationUpdateRequest(
+                        tripId = created.id,
+                        userId = request.createdBy,
+                        latitude = initLat,
+                        longitude = initLng,
+                        speed = initSpeed,
+                        battery = initBattery,
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+            }
+            val creatorNorm = request.createdBy.trim().lowercase().substringBefore("@")
+            val updatedMembers = created.members.mapIndexed { idx, m ->
+                val mNorm = m.name.trim().lowercase().substringBefore("@")
+                if (idx == 0 || mNorm == creatorNorm || m.id.trim().lowercase() == creatorNorm) {
+                    m.copy(latitude = initLat, longitude = initLng, speedKmh = initSpeed, batteryPercent = initBattery)
+                } else m
+            }
+            created.copy(
+                members = updatedMembers,
+                sourceLat = if (created.sourceLat != 0.0) created.sourceLat else initLat,
+                sourceLng = if (created.sourceLng != 0.0) created.sourceLng else initLng
+            )
+        } else {
+            created
+        }
     }
 
     override suspend fun deleteTrip(tripId: String): Result<Boolean> = runCatching {
@@ -66,13 +113,56 @@ class KtorTravelRepository(
     }
 
     override suspend fun joinTrip(tripCode: String, userId: String, userName: String): Result<Trip> = runCatching {
+        val live = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
+        val liveLat = live?.latitude?.takeIf { it != 0.0 }
+        val liveLng = live?.longitude?.takeIf { it != 0.0 }
+        val liveSpeed = live?.speedKmh ?: 0.0
+        val liveBattery = PlatformBattery.getBatteryLevel()
+
         val response = client.post(config.joinTripEndpoint()) {
             contentType(ContentType.Application.Json)
-            setBody(JoinTripRequest(tripCode = tripCode, userId = userId, userName = userName))
+            setBody(
+                JoinTripRequest(
+                    tripCode = tripCode,
+                    userId = userId,
+                    userName = userName,
+                    latitude = liveLat,
+                    longitude = liveLng
+                )
+            )
         }
         response.requireSuccess()
         val text = response.bodyAsText()
-        text.toTripOrFallback(null, tripCode)
+        val joined = text.toTripOrFallback(null, tripCode)
+
+        // Immediately push joining member's live GPS to /api/locations so Leader never sees "Waiting for GPS" / "Connecting..."
+        if (liveLat != null && liveLng != null) {
+            runCatching {
+                updateLocation(
+                    LocationUpdateRequest(
+                        tripId = joined.id,
+                        userId = userName.ifBlank { userId },
+                        latitude = liveLat,
+                        longitude = liveLng,
+                        speed = liveSpeed,
+                        battery = liveBattery,
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+            }
+            val myNorm = userName.trim().lowercase().substringBefore("@")
+            val myIdNorm = userId.trim().lowercase().substringBefore("@")
+            val updatedMembers = joined.members.map { m ->
+                val mNorm = m.name.trim().lowercase().substringBefore("@")
+                val mId = m.id.trim().lowercase().substringBefore("@")
+                if (mNorm == myNorm || mId == myNorm || mNorm == myIdNorm || mId == myIdNorm) {
+                    m.copy(latitude = liveLat, longitude = liveLng, speedKmh = liveSpeed, batteryPercent = liveBattery)
+                } else m
+            }
+            joined.copy(members = updatedMembers)
+        } else {
+            joined
+        }
     }
 
     override suspend fun liveSnapshot(tripId: String): Result<Trip> = runCatching {
@@ -125,18 +215,43 @@ class KtorTravelRepository(
             val vType = obj["vehicleType"]?.jsonPrimitive?.contentOrNull ?: "CAR"
             val tripCode = obj["tripCode"]?.jsonPrimitive?.contentOrNull ?: id
             val createdBy = obj["createdBy"]?.jsonPrimitive?.contentOrNull ?: obj["creator"]?.jsonPrimitive?.contentOrNull ?: ""
+            val sLat = obj["sourceLat"]?.jsonPrimitive?.doubleOrNull ?: 0.0
+            val sLng = obj["sourceLng"]?.jsonPrimitive?.doubleOrNull ?: 0.0
+            val dLat = obj["destLat"]?.jsonPrimitive?.doubleOrNull ?: 0.0
+            val dLng = obj["destLng"]?.jsonPrimitive?.doubleOrNull ?: 0.0
             val members = obj["members"]?.jsonArray?.mapNotNull { m ->
                 val mObj = m.jsonObject
                 val mId = mObj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
                 val mName = mObj["name"]?.jsonPrimitive?.contentOrNull ?: mId
-                val lat = mObj["latitude"]?.jsonPrimitive?.doubleOrNull
-                val lng = mObj["longitude"]?.jsonPrimitive?.doubleOrNull
+                val rawLat = mObj["latitude"]?.jsonPrimitive?.doubleOrNull
+                val rawLng = mObj["longitude"]?.jsonPrimitive?.doubleOrNull
+                // Filter out legacy server hardcoded Bengaluru default (12.9716, 77.5946)
+                val isLegacyDefault = rawLat != null && rawLng != null &&
+                    kotlin.math.abs(rawLat - 12.9716) < 0.00001 && kotlin.math.abs(rawLng - 77.5946) < 0.00001
+                val lat = if (isLegacyDefault) null else rawLat
+                val lng = if (isLegacyDefault) null else rawLng
                 val speed = mObj["speedKmh"]?.jsonPrimitive?.doubleOrNull ?: mObj["speed"]?.jsonPrimitive?.doubleOrNull
                 val battery = mObj["batteryPercent"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: mObj["battery"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
                 val avatar = mObj["avatarType"]?.jsonPrimitive?.contentOrNull ?: "MALE_1"
                 TripMember(mId, mName, 0xFF2F80ED, true, lat, lng, speed, battery, avatar)
             } ?: emptyList()
-            Trip(id, name, src, dst, dates, TripStatus.LIVE, members, coverImage = cover, vehicleType = vType, tripCode = tripCode, createdBy = createdBy)
+            Trip(
+                id = id,
+                name = name,
+                source = src,
+                destination = dst,
+                dates = dates,
+                status = TripStatus.LIVE,
+                members = members,
+                coverImage = cover,
+                vehicleType = vType,
+                tripCode = tripCode,
+                createdBy = createdBy,
+                sourceLat = sLat,
+                sourceLng = sLng,
+                destLat = dLat,
+                destLng = dLng
+            )
         }
     }
 
@@ -234,8 +349,12 @@ private fun String.toTripOrFallback(request: CreateTripRequest?, expectedId: Str
         val item = element.jsonObject
         val id = item["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
         val name = item["name"]?.jsonPrimitive?.contentOrNull ?: id
-        val lat = item["latitude"]?.jsonPrimitive?.doubleOrNull
-        val lng = item["longitude"]?.jsonPrimitive?.doubleOrNull
+        val rawLat = item["latitude"]?.jsonPrimitive?.doubleOrNull
+        val rawLng = item["longitude"]?.jsonPrimitive?.doubleOrNull
+        val isLegacyDefault = rawLat != null && rawLng != null &&
+            kotlin.math.abs(rawLat - 12.9716) < 0.00001 && kotlin.math.abs(rawLng - 77.5946) < 0.00001
+        val lat = if (isLegacyDefault) null else rawLat
+        val lng = if (isLegacyDefault) null else rawLng
         val speed = item["speedKmh"]?.jsonPrimitive?.doubleOrNull ?: item["speed"]?.jsonPrimitive?.doubleOrNull
         val battery = item["batteryPercent"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: item["battery"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
         val avatar = item["avatarType"]?.jsonPrimitive?.contentOrNull ?: "MALE_1"
@@ -247,6 +366,10 @@ private fun String.toTripOrFallback(request: CreateTripRequest?, expectedId: Str
     val createdBy = json?.get("createdBy")?.jsonPrimitive?.contentOrNull
         ?: json?.get("creator")?.jsonPrimitive?.contentOrNull
         ?: request?.createdBy ?: ""
+    val sLat = json?.get("sourceLat")?.jsonPrimitive?.doubleOrNull ?: request?.sourceLat ?: 0.0
+    val sLng = json?.get("sourceLng")?.jsonPrimitive?.doubleOrNull ?: request?.sourceLng ?: 0.0
+    val dLat = json?.get("destLat")?.jsonPrimitive?.doubleOrNull ?: request?.destLat ?: 0.0
+    val dLng = json?.get("destLng")?.jsonPrimitive?.doubleOrNull ?: request?.destLng ?: 0.0
     return Trip(
         id = tripId,
         name = json?.get("name")?.jsonPrimitive?.contentOrNull ?: json?.get("tripName")?.jsonPrimitive?.contentOrNull ?: request?.tripName ?: "Live trip",
@@ -258,7 +381,11 @@ private fun String.toTripOrFallback(request: CreateTripRequest?, expectedId: Str
         coverImage = json?.get("coverImage")?.jsonPrimitive?.contentOrNull ?: request?.coverImage,
         vehicleType = vType,
         tripCode = tripCode,
-        createdBy = createdBy
+        createdBy = createdBy,
+        sourceLat = sLat,
+        sourceLng = sLng,
+        destLat = dLat,
+        destLng = dLng
     )
 }
 

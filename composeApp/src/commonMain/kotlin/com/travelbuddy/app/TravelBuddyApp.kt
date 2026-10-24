@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,6 +50,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -82,6 +84,8 @@ import com.travelbuddy.app.data.RealtimeLocationGateway
 import com.travelbuddy.app.data.TravelApiConfig
 import com.travelbuddy.app.data.TravelRepository
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
@@ -273,8 +277,17 @@ internal fun TravelBuddyMain(
         if (tripId.isBlank()) return@LaunchedEffect
         repository.liveSnapshot(tripId)
             .onSuccess { snapshot ->
-                activeTrip = snapshot
-                members = snapshot.members
+                val curr = activeTrip
+                val merged = snapshot.copy(
+                    members = deduplicateTripMembers(snapshot.members, currentUserName, snapshot.createdBy.ifBlank { curr?.createdBy ?: "" }),
+                    createdBy = snapshot.createdBy.ifBlank { curr?.createdBy ?: "" },
+                    sourceLat = if (snapshot.sourceLat != 0.0) snapshot.sourceLat else (curr?.sourceLat ?: 0.0),
+                    sourceLng = if (snapshot.sourceLng != 0.0) snapshot.sourceLng else (curr?.sourceLng ?: 0.0),
+                    destLat = if (snapshot.destLat != 0.0) snapshot.destLat else (curr?.destLat ?: 0.0),
+                    destLng = if (snapshot.destLng != 0.0) snapshot.destLng else (curr?.destLng ?: 0.0)
+                )
+                activeTrip = merged
+                members = merged.members
                 apiMessage = "Live snapshot refreshed."
             }
             .onFailure { apiMessage = "Live snapshot unavailable: ${it.message ?: "unknown error"}" }
@@ -286,6 +299,36 @@ internal fun TravelBuddyMain(
         repository.settlements(tripId).onSuccess { settlements = it }
     }
 
+    // Global continuous live GPS publisher & member sync across all tabs (Home, Trips, Track, Chat, Split)
+    LaunchedEffect(activeTrip?.id, currentUserName, config.useRemoteApi) {
+        if (!config.useRemoteApi) return@LaunchedEffect
+        val tripId = activeTrip?.id ?: return@LaunchedEffect
+        if (tripId.isBlank()) return@LaunchedEffect
+        val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "Traveler" } }
+
+        try {
+            PlatformLocation.fetchFreshLocation()
+        } catch (_: Exception) {}
+
+        while (isActive) {
+            val live = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
+            if (live != null && live.latitude != 0.0 && live.longitude != 0.0) {
+                repository.updateLocation(
+                    LocationUpdateRequest(
+                        tripId = tripId,
+                        userId = myName,
+                        latitude = live.latitude,
+                        longitude = live.longitude,
+                        speed = live.speedKmh,
+                        battery = PlatformBattery.getBatteryLevel(),
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+            }
+            delay(2500)
+        }
+    }
+
     LaunchedEffect(activeTrip?.id, config.webSocketUrl, config.useRemoteApi) {
         if (!config.useRemoteApi) return@LaunchedEffect
         val tripId = activeTrip?.id ?: return@LaunchedEffect
@@ -294,12 +337,31 @@ internal fun TravelBuddyMain(
         val gateway = RealtimeLocationGateway(socketUrl)
         try {
             gateway.collect { event ->
-                if (event.tripId == tripId) {
+                val curr = activeTrip
+                val sameTrip = event.tripId.equals(tripId, ignoreCase = true) ||
+                    (curr != null && event.tripId.equals(curr.tripCode, ignoreCase = true))
+                if (sameTrip) {
                     liveLocationCount += 1
-                    members = members.map { member ->
-                        if (member.id == event.userId) member.copy(isSharingLocation = true) else member
+                    // Apply the pushed live GPS coordinates to the matching traveler instantly
+                    val evNorm = event.userId.trim().lowercase().replace(" ", "").substringBefore("@")
+                    var matched = false
+                    val updatedMembers = members.map { member ->
+                        val idNorm = member.id.trim().lowercase().replace(" ", "").substringBefore("@")
+                        val nameNorm = member.name.trim().lowercase().replace(" ", "").substringBefore("@")
+                        if (evNorm.isNotBlank() && (idNorm == evNorm || nameNorm == evNorm)) {
+                            matched = true
+                            member.copy(
+                                isSharingLocation = true,
+                                latitude = event.latitude,
+                                longitude = event.longitude,
+                                speedKmh = event.speed ?: member.speedKmh,
+                                batteryPercent = event.battery ?: member.batteryPercent
+                            )
+                        } else member
                     }
-                    apiMessage = "Live location updated."
+                    if (matched && updatedMembers != members) {
+                        members = updatedMembers
+                    }
                 }
             }
         } catch (error: Throwable) {
@@ -449,6 +511,37 @@ internal fun TravelBuddyMain(
                                 members = deduplicateTripMembers(trip.members, currentUserName, trip.createdBy)
                                 apiMessage = "Switched to '${trip.name}' • Live tracking active"
                                 selectedTab = AppTab.Track
+                                if (config.useRemoteApi) {
+                                    val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "Traveler" } }
+                                    scope.launch {
+                                        val live = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
+                                        repository.joinTrip(trip.id, myName, myName).onSuccess { joined ->
+                                            val clean = deduplicateTripMembers(joined.members, myName, joined.createdBy.ifBlank { trip.createdBy })
+                                            val merged = joined.copy(
+                                                members = clean,
+                                                sourceLat = if (joined.sourceLat != 0.0) joined.sourceLat else trip.sourceLat,
+                                                sourceLng = if (joined.sourceLng != 0.0) joined.sourceLng else trip.sourceLng,
+                                                destLat = if (joined.destLat != 0.0) joined.destLat else trip.destLat,
+                                                destLng = if (joined.destLng != 0.0) joined.destLng else trip.destLng
+                                            )
+                                            activeTrip = merged
+                                            members = clean
+                                        }
+                                        if (live != null && live.latitude != 0.0) {
+                                            repository.updateLocation(
+                                                LocationUpdateRequest(
+                                                    tripId = trip.id,
+                                                    userId = myName,
+                                                    latitude = live.latitude,
+                                                    longitude = live.longitude,
+                                                    speed = live.speedKmh,
+                                                    battery = PlatformBattery.getBatteryLevel(),
+                                                    timestamp = System.currentTimeMillis()
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
                             },
                             onDelete = { trip ->
                                 TripStorage.markTripDeleted(trip.id)
@@ -527,7 +620,11 @@ internal fun TravelBuddyMain(
                                         createdBy = myCreatorName,
                                         coverImage = draft.coverImage,
                                         members = listOf(myCreatorName),
-                                        vehicleType = draft.vehicleType
+                                        vehicleType = draft.vehicleType,
+                                        sourceLat = draft.sourceLat,
+                                        sourceLng = draft.sourceLng,
+                                        destLat = draft.destLat,
+                                        destLng = draft.destLng
                                     )
                                     repository.createTrip(request)
                                         .onSuccess { trip ->
@@ -2210,17 +2307,16 @@ private fun CreateTripDialog(
 
     LaunchedEffect(Unit) {
         if (source.isBlank()) {
-            val live = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
-            if (live != null && live.latitude != 0.0) {
+            isDetectingGps = true
+            // Always request a fresh, precise live GPS fix (never a stale cached / nearby one)
+            val live = PlatformLocation.fetchFreshLocation() ?: PlatformLocation.getCurrentLocation()
+            if (live != null && live.latitude != 0.0 && source.isBlank()) {
                 sourceLat = live.latitude
                 sourceLng = live.longitude
-                val geocoded = PlatformLocation.reverseGeocode(live.latitude, live.longitude)
-                source = when {
-                    !geocoded.isNullOrBlank() -> geocoded
-                    !live.address.isNullOrBlank() -> live.address
-                    else -> LocationCoordinateResolver.resolveNearestCityOrArea(live.latitude, live.longitude)
-                }
+                val exact = LocationCoordinateResolver.exactAddressFor(live.latitude, live.longitude)
+                if (source.isBlank()) source = exact
             }
+            isDetectingGps = false
         }
     }
     var title by remember { mutableStateOf("") }
@@ -2390,12 +2486,7 @@ private fun CreateTripDialog(
                                         if (fresh != null && fresh.latitude != 0.0) {
                                             sourceLat = fresh.latitude
                                             sourceLng = fresh.longitude
-                                            val geocoded = PlatformLocation.reverseGeocode(fresh.latitude, fresh.longitude)
-                                            source = when {
-                                                !geocoded.isNullOrBlank() -> geocoded
-                                                !fresh.address.isNullOrBlank() -> fresh.address
-                                                else -> LocationCoordinateResolver.resolveNearestCityOrArea(fresh.latitude, fresh.longitude)
-                                            }
+                                            source = LocationCoordinateResolver.exactAddressFor(fresh.latitude, fresh.longitude)
                                         }
                                         sourceSuggestions = emptyList()
                                         isDetectingGps = false
@@ -2690,7 +2781,7 @@ private fun CreateTripDialog(
 
                         // Resolve source coordinates if manual text was entered
                         if ((finalSrcLat == 0.0 || finalSrcLng == 0.0) && source.isNotBlank()) {
-                            val resolved = PlatformLocation.geocodeAddress(source)
+                            val resolved = withContext(Dispatchers.Default) { PlatformLocation.geocodeAddress(source) }
                             if (resolved != null && resolved.first != 0.0) {
                                 finalSrcLat = resolved.first
                                 finalSrcLng = resolved.second
@@ -2706,7 +2797,7 @@ private fun CreateTripDialog(
 
                         // Resolve destination coordinates if manual text was entered
                         if ((finalDstLat == 0.0 || finalDstLng == 0.0) && destination.isNotBlank()) {
-                            val resolved = PlatformLocation.geocodeAddress(destination)
+                            val resolved = withContext(Dispatchers.Default) { PlatformLocation.geocodeAddress(destination) }
                             if (resolved != null && resolved.first != 0.0) {
                                 finalDstLat = resolved.first
                                 finalDstLng = resolved.second
@@ -2720,16 +2811,11 @@ private fun CreateTripDialog(
                             }
                         }
 
-                        val resolvedSource = source.ifBlank {
+                        val resolvedSource = if (source.isNotBlank()) source else {
                             if (live != null && live.latitude != 0.0) {
                                 finalSrcLat = live.latitude
                                 finalSrcLng = live.longitude
-                                val geocoded = PlatformLocation.reverseGeocode(live.latitude, live.longitude)
-                                when {
-                                    !geocoded.isNullOrBlank() -> geocoded
-                                    !live.address.isNullOrBlank() -> live.address
-                                    else -> LocationCoordinateResolver.resolveNearestCityOrArea(live.latitude, live.longitude)
-                                }
+                                LocationCoordinateResolver.exactAddressFor(live.latitude, live.longitude)
                             } else "Current Location"
                         }
                         val initialMembers = tripMembers.map { m ->
@@ -2950,6 +3036,27 @@ fun deduplicateTripMembers(
         val key = if (norm.isNotBlank()) norm else m.id.trim().lowercase()
         if (seen.add(key)) {
             result.add(m)
+        } else {
+            // Duplicate entry of the same traveler (e.g. one from "join" without GPS and one
+            // created by a live location packet). Keep the identity of the first entry but
+            // take the live GPS coordinates so the member never stays stuck on "Waiting for GPS".
+            val idx = result.indexOfFirst {
+                val n = it.name.trim().lowercase().substringBefore("@")
+                (if (n.isNotBlank()) n else it.id.trim().lowercase()) == key
+            }
+            if (idx >= 0) {
+                val kept = result[idx]
+                val keptHasGps = kept.latitude != null && kept.longitude != null && kept.latitude != 0.0
+                val dupHasGps = m.latitude != null && m.longitude != null && m.latitude != 0.0
+                if (!keptHasGps && dupHasGps) {
+                    result[idx] = kept.copy(
+                        latitude = m.latitude,
+                        longitude = m.longitude,
+                        speedKmh = m.speedKmh ?: kept.speedKmh,
+                        batteryPercent = m.batteryPercent ?: kept.batteryPercent
+                    )
+                }
+            }
         }
     }
     return result
@@ -2989,10 +3096,14 @@ private fun TrackingScreen(
     var telemetryTick by remember { mutableStateOf(0) }
     var currentLiveLocation by remember { mutableStateOf<RealLocation?>(PlatformLocation.getCurrentLocation()) }
 
-    LaunchedEffect(Unit) {
+    DisposableEffect(Unit) {
         currentLiveLocation = PlatformLocation.getCurrentLocation()
-        PlatformLocation.startLocationUpdates { updated ->
+        val listener: (RealLocation) -> Unit = { updated ->
             currentLiveLocation = updated
+        }
+        PlatformLocation.startLocationUpdates(listener)
+        onDispose {
+            PlatformLocation.removeLocationListener(listener)
         }
     }
 
@@ -3003,10 +3114,6 @@ private fun TrackingScreen(
         }
     }
 
-    val distinctBuddies = remember(activeBuddies, currentUserName, activeTrip?.createdBy) {
-        deduplicateTripMembers(activeBuddies, currentUserName, activeTrip?.createdBy.orEmpty())
-    }
-
     // Keep activeBuddies synced when activeTrip or members change
     LaunchedEffect(activeTrip, members) {
         if (activeTrip != null && activeTrip.id.isNotBlank()) {
@@ -3015,16 +3122,19 @@ private fun TrackingScreen(
         activeBuddies = deduplicateTripMembers(members, currentUserName, activeTrip?.createdBy.orEmpty())
     }
 
-    // Bidirectional Real-time Multi-Device Sync: Auto-refreshes co-travelers and telemetry every 3.5s
+    // Bidirectional Real-time Multi-Device Sync: Auto-refreshes co-travelers and telemetry every 2s
     LaunchedEffect(activeTrip?.id) {
         val currentTripId = activeTrip?.id ?: return@LaunchedEffect
         if (currentTripId.isBlank()) return@LaunchedEffect
         val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "Traveler" } }
         val myId = SessionManager.getUserId().ifBlank { "usr-${myName.hashCode().absoluteValue}" }
 
-        // Eagerly acquire fresh high-accuracy GPS fix on launch
+        // Eagerly acquire fresh high-accuracy GPS fix on launch and register membership on server
         try {
             PlatformLocation.fetchFreshLocation()
+        } catch (_: Exception) {}
+        try {
+            repository?.joinTrip(currentTripId, myName, myName)
         } catch (_: Exception) {}
 
         while (isActive) {
@@ -3055,7 +3165,16 @@ private fun TrackingScreen(
                 if (serverTrip != null && serverTrip.members.isNotEmpty()) {
                     val cleanList = deduplicateTripMembers(serverTrip.members, myName, serverTrip.createdBy)
                     activeBuddies = cleanList
-                    onTripUpdated?.invoke(serverTrip.copy(members = cleanList))
+                    val prev = activeTrip
+                    val mergedTrip = serverTrip.copy(
+                        members = cleanList,
+                        createdBy = serverTrip.createdBy.ifBlank { prev?.createdBy ?: "" },
+                        sourceLat = if (serverTrip.sourceLat != 0.0) serverTrip.sourceLat else (prev?.sourceLat ?: 0.0),
+                        sourceLng = if (serverTrip.sourceLng != 0.0) serverTrip.sourceLng else (prev?.sourceLng ?: 0.0),
+                        destLat = if (serverTrip.destLat != 0.0) serverTrip.destLat else (prev?.destLat ?: 0.0),
+                        destLng = if (serverTrip.destLng != 0.0) serverTrip.destLng else (prev?.destLng ?: 0.0)
+                    )
+                    onTripUpdated?.invoke(mergedTrip)
                 }
             }
             delay(2000)
@@ -3064,10 +3183,79 @@ private fun TrackingScreen(
 
     val srcName = if (hasActiveTrip && activeTrip.source.isNotBlank()) activeTrip.source else "Starting Point"
     val dstName = if (hasActiveTrip && activeTrip.destination.isNotBlank()) activeTrip.destination else ""
-    val totalRouteKm = remember(srcName, dstName) {
-        if (dstName.isNotBlank()) {
-            LocationCoordinateResolver.calculateRoadDistanceKm(srcName, dstName)
-        } else 0.0
+
+    // Resolve coordinates on background thread without ever blocking UI scroll or composition
+    var resolvedSrcCoords by remember(activeTrip?.id, activeTrip?.source, activeTrip?.sourceLat, activeTrip?.sourceLng) {
+        mutableStateOf(
+            if (activeTrip != null && activeTrip.sourceLat != 0.0 && activeTrip.sourceLng != 0.0) {
+                Pair(activeTrip.sourceLat, activeTrip.sourceLng)
+            } else {
+                val live = currentLiveLocation ?: PlatformLocation.getCurrentLocation()
+                LocationCoordinateResolver.resolveCoordinates(
+                    activeTrip?.source ?: "",
+                    live?.latitude ?: 0.0,
+                    live?.longitude ?: 0.0
+                )
+            }
+        )
+    }
+    LaunchedEffect(activeTrip?.id, activeTrip?.source, activeTrip?.sourceLat, activeTrip?.sourceLng, currentLiveLocation) {
+        if (activeTrip != null && activeTrip.sourceLat != 0.0 && activeTrip.sourceLng != 0.0) {
+            resolvedSrcCoords = Pair(activeTrip.sourceLat, activeTrip.sourceLng)
+        } else {
+            val live = currentLiveLocation ?: PlatformLocation.getCurrentLocation()
+            val asyncSrc = LocationCoordinateResolver.resolveCoordinatesAsync(
+                activeTrip?.source ?: "",
+                live?.latitude ?: 0.0,
+                live?.longitude ?: 0.0
+            )
+            if (asyncSrc.first != 0.0 && asyncSrc.second != 0.0) {
+                resolvedSrcCoords = asyncSrc
+            }
+        }
+    }
+
+    val distinctBuddies = remember(activeBuddies, currentUserName, activeTrip?.createdBy, currentLiveLocation, resolvedSrcCoords) {
+        val base = deduplicateTripMembers(activeBuddies, currentUserName, activeTrip?.createdBy.orEmpty())
+        val live = currentLiveLocation
+        val myNorm = currentUserName.ifBlank { SessionManager.getUserName() }.trim().lowercase().substringBefore("@")
+        val myNormId = SessionManager.getUserId().trim().lowercase()
+        val myIdx = base.indexOfFirst {
+            val mId = it.id.trim().lowercase().substringBefore("@")
+            val mNorm = it.name.trim().lowercase().substringBefore("@")
+            (myNormId.isNotBlank() && mId == myNormId) ||
+                (myNorm.isNotBlank() && (mNorm == myNorm || mId == myNorm))
+        }.takeIf { it >= 0 } ?: if (base.size == 1) 0 else -1
+
+        base.mapIndexed { idx, m ->
+            if (idx == myIdx && live != null && live.latitude != 0.0) {
+                m.copy(latitude = live.latitude, longitude = live.longitude, speedKmh = live.speedKmh)
+            } else if (idx == 0 && (m.latitude == null || m.latitude == 0.0) && resolvedSrcCoords.first != 0.0) {
+                m.copy(latitude = resolvedSrcCoords.first, longitude = resolvedSrcCoords.second)
+            } else {
+                m
+            }
+        }
+    }
+
+    var resolvedDstCoords by remember(activeTrip?.id, activeTrip?.destination, activeTrip?.destLat, activeTrip?.destLng) {
+        mutableStateOf(
+            if (activeTrip != null && activeTrip.destLat != 0.0 && activeTrip.destLng != 0.0) {
+                Pair(activeTrip.destLat, activeTrip.destLng)
+            } else {
+                LocationCoordinateResolver.resolveCoordinates(activeTrip?.destination ?: "")
+            }
+        )
+    }
+    LaunchedEffect(activeTrip?.id, activeTrip?.destination, activeTrip?.destLat, activeTrip?.destLng) {
+        if (activeTrip != null && activeTrip.destLat != 0.0 && activeTrip.destLng != 0.0) {
+            resolvedDstCoords = Pair(activeTrip.destLat, activeTrip.destLng)
+        } else if (!activeTrip?.destination.isNullOrBlank()) {
+            val asyncDst = LocationCoordinateResolver.resolveCoordinatesAsync(activeTrip?.destination ?: "")
+            if (asyncDst.first != 0.0 && asyncDst.second != 0.0) {
+                resolvedDstCoords = asyncDst
+            }
+        }
     }
 
     // State for child school bag / personal tag device
@@ -3092,9 +3280,9 @@ private fun TrackingScreen(
     var engineLocked by remember { mutableStateOf(false) }
     var tagAlertTriggered by remember { mutableStateOf(false) }
 
-    val trackLiveUsersState = rememberLazyListState()
-    val trackVehicleState = rememberLazyListState()
-    val trackTagState = rememberLazyListState()
+    val trackLiveUsersScrollState = rememberScrollState()
+    val trackVehicleScrollState = rememberScrollState()
+    val trackTagScrollState = rememberScrollState()
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
@@ -3127,192 +3315,208 @@ private fun TrackingScreen(
         when (selectedMode) {
             0 -> {
                 // FEATURE 1: LIVE USERS TRACKING (REAL-TIME GOOGLE MAP & DISTANCE MATRIX)
-                LazyColumn(
-                    state = trackLiveUsersState,
-                    modifier = Modifier.fillMaxSize().verticalScrollbar(trackLiveUsersState),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                // Uses Column + verticalScroll so the native MapView stays composed and NEVER freezes/recreates when scrolling!
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(trackLiveUsersScrollState)
+                        .verticalScrollbar(trackLiveUsersScrollState)
+                        .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    item {
-                        val (resolvedSrcLat, resolvedSrcLng) = if (activeTrip != null && activeTrip.sourceLat != 0.0 && activeTrip.sourceLng != 0.0) {
-                            Pair(activeTrip.sourceLat, activeTrip.sourceLng)
-                        } else {
-                            LocationCoordinateResolver.resolveCoordinates(activeTrip?.source ?: "")
-                        }
-                        val (resolvedDstLat, resolvedDstLng) = if (activeTrip != null && activeTrip.destLat != 0.0 && activeTrip.destLng != 0.0) {
-                            Pair(activeTrip.destLat, activeTrip.destLng)
-                        } else {
-                            LocationCoordinateResolver.resolveCoordinates(activeTrip?.destination ?: "")
-                        }
-                        val myRealLat = currentLiveLocation?.latitude ?: resolvedSrcLat
-                        val myRealLng = currentLiveLocation?.longitude ?: resolvedSrcLng
+                    val (resolvedSrcLat, resolvedSrcLng) = resolvedSrcCoords
+                    val (resolvedDstLat, resolvedDstLng) = resolvedDstCoords
+                    val myRealLat = currentLiveLocation?.latitude?.takeIf { it != 0.0 } ?: resolvedSrcLat
+                    val myRealLng = currentLiveLocation?.longitude?.takeIf { it != 0.0 } ?: resolvedSrcLng
 
-                        LiveGoogleMapView(
-                            sourceName = srcName,
-                            sourceLat = resolvedSrcLat,
-                            sourceLng = resolvedSrcLng,
-                            currentUserLat = myRealLat,
-                            currentUserLng = myRealLng,
-                            destinationName = dstName,
-                            destinationLat = resolvedDstLat,
-                            destinationLng = resolvedDstLng,
-                            members = if (hasActiveTrip) distinctBuddies else emptyList(),
-                            vehicle = null,
-                            vehicleType = activeTrip?.vehicleType ?: "CAR",
-                            childBagDevice = null,
-                            isLiveUsersMode = true,
-                            isFullscreen = false,
-                            onToggleFullscreen = { isMapFullscreen = true },
-                            modifier = Modifier.fillMaxWidth().height(320.dp)
+                    LiveGoogleMapView(
+                        sourceName = srcName,
+                        sourceLat = resolvedSrcLat,
+                        sourceLng = resolvedSrcLng,
+                        currentUserLat = myRealLat,
+                        currentUserLng = myRealLng,
+                        destinationName = dstName,
+                        destinationLat = resolvedDstLat,
+                        destinationLng = resolvedDstLng,
+                        members = if (hasActiveTrip) distinctBuddies else emptyList(),
+                        vehicle = null,
+                        vehicleType = activeTrip?.vehicleType ?: "CAR",
+                        childBagDevice = null,
+                        isLiveUsersMode = true,
+                        isFullscreen = false,
+                        onToggleFullscreen = { isMapFullscreen = true },
+                        modifier = Modifier.fillMaxWidth().height(320.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Live Navigation & Team",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = tbTextColor()
+                        )
+                        ScrollIndicatorHint(
+                            text = "Scroll down for telemetry & table",
+                            darkMode = LocalTravelBuddyDarkMode.current
                         )
                     }
 
-                    item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "Live Navigation & Team",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = tbTextColor()
-                            )
-                            ScrollIndicatorHint(
-                                text = "Scroll down for telemetry & table",
-                                darkMode = LocalTravelBuddyDarkMode.current
-                            )
-                        }
-                    }
-
                     // Share & Join Tracking Code Card
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Soft
-                            )
-                        ) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f, fill = false)) {
-                                        Text(
-                                            if (hasActiveTrip) "Active Trip ID / Tracking Code" else "No Active Trip",
-                                            color = tbSubtextColor(),
-                                            fontSize = 12.sp,
-                                            maxLines = 1,
-                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            if (hasActiveTrip) trackingCode else "Create or Join a Trip",
-                                            color = tbTextColor(),
-                                            fontSize = if (hasActiveTrip) 20.sp else 16.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    if (hasActiveTrip) {
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Surface(
-                                                shape = RoundedCornerShape(12.dp),
-                                                color = Color(0xFF22C55E).copy(alpha = 0.15f),
-                                                modifier = Modifier.clickable {
-                                                    if (onNavigateToChat != null) {
-                                                        onNavigateToChat()
-                                                    } else {
-                                                        showGroupChat = true
-                                                    }
-                                                }
-                                            ) {
-                                                Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                    Text("💬", fontSize = 13.sp)
-                                                    Spacer(Modifier.width(4.dp))
-                                                    Text("Chat", color = Color(0xFF16A34A), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Soft
+                        )
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f, fill = false)) {
+                                    Text(
+                                        if (hasActiveTrip) "Active Trip ID / Tracking Code" else "No Active Trip",
+                                        color = tbSubtextColor(),
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        if (hasActiveTrip) trackingCode else "Create or Join a Trip",
+                                        color = tbTextColor(),
+                                        fontSize = if (hasActiveTrip) 20.sp else 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (hasActiveTrip) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = Color(0xFF22C55E).copy(alpha = 0.15f),
+                                            modifier = Modifier.clickable {
+                                                if (onNavigateToChat != null) {
+                                                    onNavigateToChat()
+                                                } else {
+                                                    showGroupChat = true
                                                 }
                                             }
-                                            Surface(
-                                                shape = RoundedCornerShape(12.dp),
-                                                color = Blue.copy(alpha = 0.15f),
-                                                modifier = Modifier.clickable {
-                                                    clipboardManager.setText(AnnotatedString(trackingCode))
-                                                    codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your travel buddy."
-                                                    PlatformShare.shareText(
-                                                        text = "Join my live trip on Travel Buddy!\nTrip ID: $trackingCode\nTrack my live location in real-time.",
-                                                        title = "Share Trip ID"
-                                                    )
-                                                }
-                                            ) {
-                                                Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                    Icon(Icons.Filled.Share, "Share", tint = Blue, modifier = Modifier.size(15.dp))
-                                                    Spacer(Modifier.width(4.dp))
-                                                    Text("Copy ID", color = Blue, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                                }
+                                        ) {
+                                            Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Text("💬", fontSize = 13.sp)
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Chat", color = Color(0xFF16A34A), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                            }
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = Blue.copy(alpha = 0.15f),
+                                            modifier = Modifier.clickable {
+                                                clipboardManager.setText(AnnotatedString(trackingCode))
+                                                codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your travel buddy."
+                                                PlatformShare.shareText(
+                                                    text = "Join my live trip on Travel Buddy!\nTrip ID: $trackingCode\nTrack my live location in real-time.",
+                                                    title = "Share Trip ID"
+                                                )
+                                            }
+                                        ) {
+                                            Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(Icons.Filled.Share, "Share", tint = Blue, modifier = Modifier.size(15.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Copy ID", color = Blue, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                             }
                                         }
                                     }
                                 }
+                            }
 
-                                HorizontalDivider(color = if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0))
+                            HorizontalDivider(color = if (LocalTravelBuddyDarkMode.current) Color(0xFF334155) else Color(0xFFE2E8F0))
 
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text("Switch / Track Another Trip ID", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = tbTextColor())
-                                    Text("Enter another user's Trip ID to track their group live on the map", fontSize = 11.sp, color = tbSubtextColor())
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    OutlinedTextField(
-                                        value = joinCodeInput,
-                                        onValueChange = { joinCodeInput = it.trim() },
-                                        placeholder = { Text("Enter Trip ID (e.g. TB-8921)", fontSize = 12.sp) },
-                                        modifier = Modifier.weight(1f),
-                                        singleLine = true
-                                    )
-                                    Button(
-                                        onClick = {
-                                            if (joinCodeInput.isNotBlank()) {
-                                                val inputCode = joinCodeInput.trim()
-                                                val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "Traveler" } }
-                                                val myId = SessionManager.getUserId().ifBlank { "usr-${myName.hashCode().absoluteValue}" }
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Switch / Track Another Trip ID", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = tbTextColor())
+                                Text("Enter another user's Trip ID to track their group live on the map", fontSize = 11.sp, color = tbSubtextColor())
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedTextField(
+                                    value = joinCodeInput,
+                                    onValueChange = { joinCodeInput = it.trim() },
+                                    placeholder = { Text("Enter Trip ID (e.g. TB-8921)", fontSize = 12.sp) },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true
+                                )
+                                Button(
+                                    onClick = {
+                                        if (joinCodeInput.isNotBlank()) {
+                                            val inputCode = joinCodeInput.trim()
+                                            val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "Traveler" } }
+                                            val myId = SessionManager.getUserId().ifBlank { "usr-${myName.hashCode().absoluteValue}" }
 
-                                                // Check if already in loaded trips
-                                                val localMatch = trips.firstOrNull { it.id.equals(inputCode, ignoreCase = true) || it.tripCode.equals(inputCode, ignoreCase = true) }
-                                                if (localMatch != null) {
-                                                    val clean = deduplicateTripMembers(localMatch.members, myName, localMatch.createdBy)
-                                                    val synced = localMatch.copy(members = clean)
-                                                    activeBuddies = clean
-                                                    trackingCode = synced.tripCode.ifBlank { synced.id }
-                                                    onTripUpdated?.invoke(synced)
-                                                    codeStatusMessage = "Now tracking '${synced.name}'!"
-                                                    joinCodeInput = ""
-                                                } else {
-                                                    scope.launch {
-                                                        // Eagerly acquire fresh high-accuracy GPS fix
-                                                        val freshLoc = PlatformLocation.fetchFreshLocation() ?: PlatformLocation.getCurrentLocation()
-                                                        // Call remote joinTrip so the server registers this device into the trip!
-                                                        repository?.joinTrip(inputCode, myName, myName)
-                                                            ?.onSuccess { joinedTrip ->
-                                                                val clean = deduplicateTripMembers(joinedTrip.members, myName, joinedTrip.createdBy)
+                                            // Check if already in loaded trips for instant UI response
+                                            val localMatch = trips.firstOrNull { it.id.equals(inputCode, ignoreCase = true) || it.tripCode.equals(inputCode, ignoreCase = true) }
+                                            if (localMatch != null) {
+                                                val clean = deduplicateTripMembers(localMatch.members, myName, localMatch.createdBy)
+                                                val synced = localMatch.copy(members = clean)
+                                                activeBuddies = clean
+                                                trackingCode = synced.tripCode.ifBlank { synced.id }
+                                                onTripUpdated?.invoke(synced)
+                                                codeStatusMessage = "Now tracking '${synced.name}'!"
+                                            }
+                                            joinCodeInput = ""
+
+                                            // ALWAYS join on the remote server and push live GPS so other members see us as Live immediately!
+                                            scope.launch {
+                                                val freshLoc = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
+                                                repository?.joinTrip(inputCode, myName, myName)
+                                                    ?.onSuccess { joinedTrip ->
+                                                        val clean = deduplicateTripMembers(joinedTrip.members, myName, joinedTrip.createdBy)
+                                                        activeBuddies = clean
+                                                        trackingCode = joinedTrip.tripCode.ifBlank { joinedTrip.id }
+                                                        onTripUpdated?.invoke(joinedTrip.copy(members = clean))
+                                                        codeStatusMessage = "Successfully joined '${joinedTrip.name}' (${clean.size} travelers)! Live tracking active."
+
+                                                        if (freshLoc != null && freshLoc.latitude != 0.0) {
+                                                            repository?.updateLocation(
+                                                                LocationUpdateRequest(
+                                                                    tripId = joinedTrip.id,
+                                                                    userId = myName,
+                                                                    latitude = freshLoc.latitude,
+                                                                    longitude = freshLoc.longitude,
+                                                                    speed = freshLoc.speedKmh,
+                                                                    battery = PlatformBattery.getBatteryLevel(),
+                                                                    timestamp = System.currentTimeMillis()
+                                                                )
+                                                            )
+                                                        }
+                                                    }
+                                                    ?.onFailure {
+                                                        repository?.getTrips()?.onSuccess { list ->
+                                                            val found = list.firstOrNull { it.id.equals(inputCode, ignoreCase = true) || it.tripCode.equals(inputCode, ignoreCase = true) }
+                                                            if (found != null) {
+                                                                val myNorm = myName.trim().lowercase().substringBefore("@")
+                                                                val updatedMembers = if (found.members.none { it.name.trim().lowercase().substringBefore("@") == myNorm }) {
+                                                                    found.members + TripMember(myId, myName, 0xFF1D64F2L, true, latitude = freshLoc?.latitude, longitude = freshLoc?.longitude, speedKmh = freshLoc?.speedKmh)
+                                                                } else found.members
+                                                                val clean = deduplicateTripMembers(updatedMembers, myName, found.createdBy)
+                                                                val synced = found.copy(members = clean)
                                                                 activeBuddies = clean
-                                                                trackingCode = joinedTrip.tripCode.ifBlank { joinedTrip.id }
-                                                                onTripUpdated?.invoke(joinedTrip.copy(members = clean))
-                                                                codeStatusMessage = "Successfully joined '${joinedTrip.name}' (${clean.size} travelers)! Live tracking active."
-                                                                joinCodeInput = ""
-
-                                                                // Push immediate first live GPS location packet
+                                                                trackingCode = synced.tripCode.ifBlank { synced.id }
+                                                                onTripUpdated?.invoke(synced)
+                                                                codeStatusMessage = "Loaded trip '${synced.name}' (${clean.size} travelers)! Live tracking active."
                                                                 if (freshLoc != null && freshLoc.latitude != 0.0) {
                                                                     repository?.updateLocation(
                                                                         LocationUpdateRequest(
-                                                                            tripId = joinedTrip.id,
+                                                                            tripId = synced.id,
                                                                             userId = myName,
                                                                             latitude = freshLoc.latitude,
                                                                             longitude = freshLoc.longitude,
@@ -3322,142 +3526,103 @@ private fun TrackingScreen(
                                                                         )
                                                                     )
                                                                 }
+                                                            } else if (localMatch == null) {
+                                                                codeStatusMessage = "Trip ID '$inputCode' not found. Please verify the code."
                                                             }
-                                                            ?.onFailure {
-                                                                // Fallback search across remote trips
-                                                                repository?.getTrips()?.onSuccess { list ->
-                                                                    val found = list.firstOrNull { it.id.equals(inputCode, ignoreCase = true) || it.tripCode.equals(inputCode, ignoreCase = true) }
-                                                                    if (found != null) {
-                                                                        val myNorm = myName.trim().lowercase().substringBefore("@")
-                                                                        val updatedMembers = if (found.members.none { it.name.trim().lowercase().substringBefore("@") == myNorm }) {
-                                                                            found.members + TripMember(myId, myName, 0xFF1D64F2L, true, latitude = freshLoc?.latitude, longitude = freshLoc?.longitude, speedKmh = freshLoc?.speedKmh)
-                                                                        } else found.members
-                                                                        val clean = deduplicateTripMembers(updatedMembers, myName, found.createdBy)
-                                                                        val synced = found.copy(members = clean)
-                                                                        activeBuddies = clean
-                                                                        trackingCode = synced.tripCode.ifBlank { synced.id }
-                                                                        onTripUpdated?.invoke(synced)
-                                                                        codeStatusMessage = "Loaded trip '${synced.name}' (${clean.size} travelers)! Live tracking active."
-                                                                        joinCodeInput = ""
-                                                                        if (freshLoc != null && freshLoc.latitude != 0.0) {
-                                                                            repository?.updateLocation(
-                                                                                LocationUpdateRequest(
-                                                                                    tripId = synced.id,
-                                                                                    userId = myName,
-                                                                                    latitude = freshLoc.latitude,
-                                                                                    longitude = freshLoc.longitude,
-                                                                                    speed = freshLoc.speedKmh,
-                                                                                    battery = PlatformBattery.getBatteryLevel(),
-                                                                                    timestamp = System.currentTimeMillis()
-                                                                                )
-                                                                            )
-                                                                        }
-                                                                    } else {
-                                                                        codeStatusMessage = "Trip ID '$inputCode' not found. Please verify the code."
-                                                                    }
-                                                                }
-                                                            }
+                                                        }
                                                     }
-                                                }
                                             }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Blue)
-                                    ) {
-                                        Text("Track")
-                                    }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                                ) {
+                                    Text("Track")
                                 }
+                            }
 
-                                codeStatusMessage?.let { msg ->
-                                    Text(msg, color = Green, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                }
+                            codeStatusMessage?.let { msg ->
+                                Text(msg, color = Green, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
 
-                    item {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Live Tracked Travelers (${distinctBuddies.size})",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = tbTextColor(),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Green.copy(alpha = 0.15f)
+                        ) {
                             Text(
-                                "Live Tracked Travelers (${distinctBuddies.size})",
+                                "● Real-time GPS",
+                                color = Green,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 17.sp,
-                                color = tbTextColor(),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Green.copy(alpha = 0.15f)
-                            ) {
-                                Text(
-                                    "● Real-time GPS",
-                                    color = Green,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
                         }
                     }
 
                     if (hasActiveTrip && distinctBuddies.isNotEmpty()) {
-                        item {
-                            val (resolvedSrcLat, resolvedSrcLng) = LocationCoordinateResolver.resolveCoordinates(activeTrip.source)
-                            val myLat = currentLiveLocation?.latitude ?: resolvedSrcLat
-                            val myLng = currentLiveLocation?.longitude ?: resolvedSrcLng
-                            val mySpeed = currentLiveLocation?.speedKmh ?: 0.0
+                        val myLat = currentLiveLocation?.latitude?.takeIf { it != 0.0 } ?: resolvedSrcLat
+                        val myLng = currentLiveLocation?.longitude?.takeIf { it != 0.0 } ?: resolvedSrcLng
+                        val mySpeed = currentLiveLocation?.speedKmh ?: 0.0
 
-                            RiderDetailsTable(
-                                buddies = distinctBuddies,
-                                currentUserName = currentUserName,
-                                tripCreatedBy = activeTrip.createdBy,
-                                currentUserLat = myLat,
-                                currentUserLng = myLng,
-                                currentUserSpeedKmh = mySpeed,
-                                telemetryTick = telemetryTick,
-                                darkMode = LocalTravelBuddyDarkMode.current
-                            )
-                        }
+                        RiderDetailsTable(
+                            buddies = distinctBuddies,
+                            currentUserName = currentUserName,
+                            tripCreatedBy = activeTrip.createdBy,
+                            currentUserLat = myLat,
+                            currentUserLng = myLng,
+                            currentUserSpeedKmh = mySpeed,
+                            telemetryTick = telemetryTick,
+                            darkMode = LocalTravelBuddyDarkMode.current
+                        )
                     }
 
                     // Companion invite card when only 1 traveler is present
                     if (hasActiveTrip && distinctBuddies.size == 1) {
-                        item {
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color(0xFFF0FDF4)
-                                ),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF86EFAC))
-                            ) {
-                                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.GroupAdd, contentDescription = null, tint = Green, modifier = Modifier.size(18.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Waiting for Travel Companion", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = tbTextColor())
-                                    }
-                                    Text(
-                                        "Share Trip ID '$trackingCode' with your buddy. Once they enter this ID in the field above or in the Trips tab, they will join this trip and both of you will track each other live with real-time distances on the Google Map.",
-                                        fontSize = 12.sp,
-                                        color = tbSubtextColor(),
-                                        lineHeight = 16.sp
-                                    )
-                                    Button(
-                                        onClick = {
-                                            clipboardManager.setText(AnnotatedString(trackingCode))
-                                            codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your companion."
-                                            PlatformShare.shareText(
-                                                text = "Join my live trip on Travel Buddy!\nTrip ID: $trackingCode\nTrack my live location in real-time.",
-                                                title = "Share Trip ID"
-                                            )
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Green),
-                                        shape = RoundedCornerShape(10.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Icon(Icons.Default.Share, null, modifier = Modifier.size(14.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Copy & Share Trip ID", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    }
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color(0xFFF0FDF4)
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF86EFAC))
+                        ) {
+                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.GroupAdd, contentDescription = null, tint = Green, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Waiting for Travel Companion", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = tbTextColor())
+                                }
+                                Text(
+                                    "Share Trip ID '$trackingCode' with your buddy. Once they enter this ID in the field above or in the Trips tab, they will join this trip and both of you will track each other live with real-time distances on the Google Map.",
+                                    fontSize = 12.sp,
+                                    color = tbSubtextColor(),
+                                    lineHeight = 16.sp
+                                )
+                                Button(
+                                    onClick = {
+                                        clipboardManager.setText(AnnotatedString(trackingCode))
+                                        codeStatusMessage = "Trip ID '$trackingCode' copied! Share with your companion."
+                                        PlatformShare.shareText(
+                                            text = "Join my live trip on Travel Buddy!\nTrip ID: $trackingCode\nTrack my live location in real-time.",
+                                            title = "Share Trip ID"
+                                        )
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Green),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.Share, null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Copy & Share Trip ID", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -3467,132 +3632,124 @@ private fun TrackingScreen(
 
             1 -> {
                 // FEATURE 2: VEHICLE GPS TRACKING & HARDWARE TELEMETRY
-                LazyColumn(
-                    state = trackVehicleState,
-                    modifier = Modifier.fillMaxSize().verticalScrollbar(trackVehicleState),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(trackVehicleScrollState)
+                        .verticalScrollbar(trackVehicleScrollState)
+                        .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    item {
-                        LiveGoogleMapView(
-                            members = emptyList(),
-                            vehicle = vehicle,
-                            isFullscreen = false,
-                            onToggleFullscreen = { isMapFullscreen = true },
-                            modifier = Modifier.fillMaxWidth().height(260.dp)
-                        )
-                    }
+                    LiveGoogleMapView(
+                        members = emptyList(),
+                        vehicle = vehicle,
+                        isFullscreen = false,
+                        onToggleFullscreen = { isMapFullscreen = true },
+                        modifier = Modifier.fillMaxWidth().height(260.dp)
+                    )
 
-                    item {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Column {
-                                Text(vehicle.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = tbTextColor())
-                                Text("Reg: ${vehicle.registrationNumber} • IMEI: ${vehicle.imei}", fontSize = 12.sp, color = tbSubtextColor())
-                            }
-                            TextButton(onClick = { showVehicleEditor = true }) {
-                                Text("Edit Info")
-                            }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column {
+                            Text(vehicle.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = tbTextColor())
+                            Text("Reg: ${vehicle.registrationNumber} • IMEI: ${vehicle.imei}", fontSize = 12.sp, color = tbSubtextColor())
+                        }
+                        TextButton(onClick = { showVehicleEditor = true }) {
+                            Text("Edit Info")
                         }
                     }
 
                     // Telemetry Grid
-                    item {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            // Speedometer Card
-                            Card(
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
-                            ) {
-                                Column(Modifier.padding(14.dp)) {
-                                    Text("Speedometer", fontSize = 11.sp, color = tbSubtextColor())
-                                    Spacer(Modifier.height(4.dp))
-                                    Text("${vehicle.speedKmh.toInt()} km/h", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Blue)
-                                    Text("Highway Cruise", fontSize = 10.sp, color = Green)
-                                }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // Speedometer Card
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                        ) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("Speedometer", fontSize = 11.sp, color = tbSubtextColor())
+                                Spacer(Modifier.height(4.dp))
+                                Text("${vehicle.speedKmh.toInt()} km/h", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Blue)
+                                Text("Highway Cruise", fontSize = 10.sp, color = Green)
                             }
+                        }
 
-                            // Ignition Status Card
-                            Card(
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
-                            ) {
-                                Column(Modifier.padding(14.dp)) {
-                                    Text("Engine Status", fontSize = 11.sp, color = tbSubtextColor())
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(if (vehicle.ignitionOn) "RUNNING" else "OFF", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (vehicle.ignitionOn) Green else Color.Gray)
-                                    Text(if (vehicle.ignitionOn) "Ignition ON" else "Parked & Locked", fontSize = 10.sp, color = tbSubtextColor())
-                                }
+                        // Ignition Status Card
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                        ) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("Engine Status", fontSize = 11.sp, color = tbSubtextColor())
+                                Spacer(Modifier.height(4.dp))
+                                Text(if (vehicle.ignitionOn) "RUNNING" else "OFF", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (vehicle.ignitionOn) Green else Color.Gray)
+                                Text(if (vehicle.ignitionOn) "Ignition ON" else "Parked & Locked", fontSize = 10.sp, color = tbSubtextColor())
                             }
                         }
                     }
 
-                    item {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            // Battery Card
-                            Card(
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
-                            ) {
-                                Column(Modifier.padding(14.dp)) {
-                                    Text("Vehicle Battery", fontSize = 11.sp, color = tbSubtextColor())
-                                    Spacer(Modifier.height(4.dp))
-                                    Text("${vehicle.batteryPercent}%", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Green)
-                                    Text("12.6V Health Good", fontSize = 10.sp, color = Green)
-                                }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // Battery Card
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                        ) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("Vehicle Battery", fontSize = 11.sp, color = tbSubtextColor())
+                                Spacer(Modifier.height(4.dp))
+                                Text("${vehicle.batteryPercent}%", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Green)
+                                Text("12.6V Health Good", fontSize = 10.sp, color = Green)
                             }
+                        }
 
-                            // Geofence Card
-                            Card(
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
-                            ) {
-                                Column(Modifier.padding(14.dp)) {
-                                    Text("Home Geofence", fontSize = 11.sp, color = tbSubtextColor())
-                                    Spacer(Modifier.height(4.dp))
-                                    Text("SAFE", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Green)
-                                    Text("200m Parking Radius", fontSize = 10.sp, color = tbSubtextColor())
-                                }
+                        // Geofence Card
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                        ) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("Home Geofence", fontSize = 11.sp, color = tbSubtextColor())
+                                Spacer(Modifier.height(4.dp))
+                                Text("SAFE", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Green)
+                                Text("200m Parking Radius", fontSize = 10.sp, color = tbSubtextColor())
                             }
                         }
                     }
 
                     // Remote Engine Immobilizer Control
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (engineLocked) Color(0xFF3B151E) else if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Soft
-                            )
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (engineLocked) Color(0xFF3B151E) else if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Soft
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    if (engineLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
-                                    null,
-                                    tint = if (engineLocked) Red else Blue,
-                                    modifier = Modifier.size(28.dp)
-                                )
-                                Spacer(Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Remote Engine Immobilizer", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tbTextColor())
-                                    Text(
-                                        if (engineLocked) "Engine is LOCKED remotely. Vehicle cannot be started." else "Engine is unlocked and ready to ride.",
-                                        fontSize = 11.sp,
-                                        color = tbSubtextColor()
-                                    )
-                                }
-                                Switch(
-                                    checked = engineLocked,
-                                    onCheckedChange = { engineLocked = it }
+                            Icon(
+                                if (engineLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                                null,
+                                tint = if (engineLocked) Red else Blue,
+                                modifier = Modifier.size(28.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Remote Engine Immobilizer", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tbTextColor())
+                                Text(
+                                    if (engineLocked) "Engine is LOCKED remotely. Vehicle cannot be started." else "Engine is unlocked and ready to ride.",
+                                    fontSize = 11.sp,
+                                    color = tbSubtextColor()
                                 )
                             }
+                            Switch(
+                                checked = engineLocked,
+                                onCheckedChange = { engineLocked = it }
+                            )
                         }
                     }
                 }
@@ -3600,143 +3757,135 @@ private fun TrackingScreen(
 
             2 -> {
                 // FEATURE 3: CHILD SCHOOL BAG & PERSONAL ASSET DEVICE TRACKING
-                LazyColumn(
-                    state = trackTagState,
-                    modifier = Modifier.fillMaxSize().verticalScrollbar(trackTagState),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(trackTagScrollState)
+                        .verticalScrollbar(trackTagScrollState)
+                        .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    item {
-                        LiveGoogleMapView(
-                            members = emptyList(),
-                            childBagDevice = childBagDevice,
-                            isFullscreen = false,
-                            onToggleFullscreen = { isMapFullscreen = true },
-                            modifier = Modifier.fillMaxWidth().height(260.dp)
-                        )
-                    }
+                    LiveGoogleMapView(
+                        members = emptyList(),
+                        childBagDevice = childBagDevice,
+                        isFullscreen = false,
+                        onToggleFullscreen = { isMapFullscreen = true },
+                        modifier = Modifier.fillMaxWidth().height(260.dp)
+                    )
 
-                    item {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Column {
-                                Text(childBagDevice.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = tbTextColor())
-                                Text(childBagDevice.subtitle, fontSize = 12.sp, color = tbSubtextColor())
-                            }
-                            Button(
-                                onClick = { showAddTagDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = Blue)
-                            ) {
-                                Text("+ Add Tag")
-                            }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column {
+                            Text(childBagDevice.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = tbTextColor())
+                            Text(childBagDevice.subtitle, fontSize = 12.sp, color = tbSubtextColor())
+                        }
+                        Button(
+                            onClick = { showAddTagDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                        ) {
+                            Text("+ Add Tag")
                         }
                     }
 
                     // Safe Zone Status Card
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (childBagDevice.isInsideSafeZone) Color(0xFFE8F8EF) else Color(0xFFFEF2F2)
-                            ),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (childBagDevice.isInsideSafeZone) Color(0xFF86EFAC) else Color(0xFFFECDD3)
-                            )
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (childBagDevice.isInsideSafeZone) Color(0xFFE8F8EF) else Color(0xFFFEF2F2)
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (childBagDevice.isInsideSafeZone) Color(0xFF86EFAC) else Color(0xFFFECDD3)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            Surface(
+                                modifier = Modifier.size(42.dp),
+                                shape = CircleShape,
+                                color = if (childBagDevice.isInsideSafeZone) Green else Red
                             ) {
-                                Surface(
-                                    modifier = Modifier.size(42.dp),
-                                    shape = CircleShape,
-                                    color = if (childBagDevice.isInsideSafeZone) Green else Red
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            if (childBagDevice.isInsideSafeZone) Icons.Filled.Check else Icons.Filled.NotificationsActive,
-                                            null,
-                                            tint = Color.White
-                                        )
-                                    }
-                                }
-                                Spacer(Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        if (childBagDevice.isInsideSafeZone) "✓ Inside School Safe Zone" else "⚠️ Outside Safe Zone Alert!",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = if (childBagDevice.isInsideSafeZone) Color(0xFF14532D) else Color(0xFF7F1D1D)
-                                    )
-                                    Text(
-                                        "Safe Zone: ${childBagDevice.safeZoneName ?: "St. Joseph's Academy"} (300m radius)",
-                                        fontSize = 12.sp,
-                                        color = if (childBagDevice.isInsideSafeZone) Color(0xFF166534) else Color(0xFF991B1B)
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        if (childBagDevice.isInsideSafeZone) Icons.Filled.Check else Icons.Filled.NotificationsActive,
+                                        null,
+                                        tint = Color.White
                                     )
                                 }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    if (childBagDevice.isInsideSafeZone) "✓ Inside School Safe Zone" else "⚠️ Outside Safe Zone Alert!",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = if (childBagDevice.isInsideSafeZone) Color(0xFF14532D) else Color(0xFF7F1D1D)
+                                )
+                                Text(
+                                    "Safe Zone: ${childBagDevice.safeZoneName ?: "St. Joseph's Academy"} (300m radius)",
+                                    fontSize = 12.sp,
+                                    color = if (childBagDevice.isInsideSafeZone) Color(0xFF166534) else Color(0xFF991B1B)
+                                )
                             }
                         }
                     }
 
                     // Device Telemetry Specs
-                    item {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Card(
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
-                            ) {
-                                Column(Modifier.padding(14.dp)) {
-                                    Text("Tag Battery", fontSize = 11.sp, color = tbSubtextColor())
-                                    Spacer(Modifier.height(4.dp))
-                                    Text("${childBagDevice.batteryPercent}%", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Green)
-                                    Text("~14 days standby", fontSize = 10.sp, color = tbSubtextColor())
-                                }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                        ) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("Tag Battery", fontSize = 11.sp, color = tbSubtextColor())
+                                Spacer(Modifier.height(4.dp))
+                                Text("${childBagDevice.batteryPercent}%", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Green)
+                                Text("~14 days standby", fontSize = 10.sp, color = tbSubtextColor())
                             }
+                        }
 
-                            Card(
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
-                            ) {
-                                Column(Modifier.padding(14.dp)) {
-                                    Text("GPS Fix", fontSize = 11.sp, color = tbSubtextColor())
-                                    Spacer(Modifier.height(4.dp))
-                                    Text("LIVE", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Blue)
-                                    Text("Updated 2 mins ago", fontSize = 10.sp, color = tbSubtextColor())
-                                }
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Color.White)
+                        ) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("GPS Fix", fontSize = 11.sp, color = tbSubtextColor())
+                                Spacer(Modifier.height(4.dp))
+                                Text("LIVE", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Blue)
+                                Text("Updated 2 mins ago", fontSize = 10.sp, color = tbSubtextColor())
                             }
                         }
                     }
 
                     // Ring Tag Action Card
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Soft)
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = if (LocalTravelBuddyDarkMode.current) Color(0xFF1E293B) else Soft)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            Icon(Icons.Filled.VolumeUp, null, tint = Blue, modifier = Modifier.size(28.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Audible Bag Tag Beacon", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tbTextColor())
+                                Text(
+                                    if (tagAlertTriggered) "Beeping tag sound activated!" else "Play a loud beep on the device to locate bag nearby.",
+                                    fontSize = 11.sp,
+                                    color = tbSubtextColor()
+                                )
+                            }
+                            Button(
+                                onClick = { tagAlertTriggered = !tagAlertTriggered },
+                                colors = ButtonDefaults.buttonColors(containerColor = if (tagAlertTriggered) Orange else Blue)
                             ) {
-                                Icon(Icons.Filled.VolumeUp, null, tint = Blue, modifier = Modifier.size(28.dp))
-                                Spacer(Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Audible Bag Tag Beacon", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tbTextColor())
-                                    Text(
-                                        if (tagAlertTriggered) "Beeping tag sound activated!" else "Play a loud beep on the device to locate bag nearby.",
-                                        fontSize = 11.sp,
-                                        color = tbSubtextColor()
-                                    )
-                                }
-                                Button(
-                                    onClick = { tagAlertTriggered = !tagAlertTriggered },
-                                    colors = ButtonDefaults.buttonColors(containerColor = if (tagAlertTriggered) Orange else Blue)
-                                ) {
-                                    Text(if (tagAlertTriggered) "Stop" else "Ring Tag")
-                                }
+                                Text(if (tagAlertTriggered) "Stop" else "Ring Tag")
                             }
                         }
                     }
@@ -3759,18 +3908,10 @@ private fun TrackingScreen(
                         .fillMaxSize()
                         .background(Color.Black)
                 ) {
-                    val (resolvedSrcLat, resolvedSrcLng) = if (activeTrip != null && activeTrip.sourceLat != 0.0 && activeTrip.sourceLng != 0.0) {
-                        Pair(activeTrip.sourceLat, activeTrip.sourceLng)
-                    } else {
-                        LocationCoordinateResolver.resolveCoordinates(activeTrip?.source ?: "")
-                    }
-                    val (resolvedDstLat, resolvedDstLng) = if (activeTrip != null && activeTrip.destLat != 0.0 && activeTrip.destLng != 0.0) {
-                        Pair(activeTrip.destLat, activeTrip.destLng)
-                    } else {
-                        LocationCoordinateResolver.resolveCoordinates(activeTrip?.destination ?: "")
-                    }
-                    val myRealLat = currentLiveLocation?.latitude ?: resolvedSrcLat
-                    val myRealLng = currentLiveLocation?.longitude ?: resolvedSrcLng
+                    val (resolvedSrcLat, resolvedSrcLng) = resolvedSrcCoords
+                    val (resolvedDstLat, resolvedDstLng) = resolvedDstCoords
+                    val myRealLat = currentLiveLocation?.latitude?.takeIf { it != 0.0 } ?: resolvedSrcLat
+                    val myRealLng = currentLiveLocation?.longitude?.takeIf { it != 0.0 } ?: resolvedSrcLng
 
                     LiveGoogleMapView(
                         sourceName = srcName,
@@ -3886,11 +4027,17 @@ private fun RiderDetailsTable(
                 HorizontalDivider(color = if (darkMode) Color(0xFF334155) else Color(0xFFF1F5F9))
 
                 // Table Rows
+                val myNormId = SessionManager.getUserId().trim().lowercase()
+                val myMemberIndex = buddies.indexOfFirst {
+                    val mId = it.id.trim().lowercase().substringBefore("@")
+                    val mNorm = it.name.trim().lowercase().substringBefore("@")
+                    (myNormId.isNotBlank() && mId == myNormId) ||
+                        (myNorm.isNotBlank() && (mNorm == myNorm || mId == myNorm))
+                }.takeIf { it >= 0 } ?: if (buddies.size == 1) 0 else -1
+
                 buddies.forEachIndexed { index, buddy ->
                     val buddyNorm = buddy.name.trim().lowercase().substringBefore("@")
-                    val isMe = buddy.name.equals(myName, ignoreCase = true) ||
-                            (myNorm.isNotBlank() && buddyNorm == myNorm) ||
-                            (index == 0 && buddies.none { it.name.trim().lowercase().substringBefore("@") == myNorm })
+                    val isMe = (index == myMemberIndex)
 
                     val speedKmh = if (isMe) {
                         currentUserSpeedKmh.roundToInt()

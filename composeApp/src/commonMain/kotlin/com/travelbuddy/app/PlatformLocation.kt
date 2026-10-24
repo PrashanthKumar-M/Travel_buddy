@@ -12,6 +12,7 @@ expect object PlatformLocation {
     fun getCurrentLocation(): RealLocation?
     suspend fun fetchFreshLocation(): RealLocation?
     fun startLocationUpdates(onUpdate: (RealLocation) -> Unit)
+    fun removeLocationListener(onUpdate: (RealLocation) -> Unit)
     fun stopLocationUpdates()
     fun geocodeAddress(addressText: String): Pair<Double, Double>?
     fun reverseGeocode(latitude: Double, longitude: Double): String?

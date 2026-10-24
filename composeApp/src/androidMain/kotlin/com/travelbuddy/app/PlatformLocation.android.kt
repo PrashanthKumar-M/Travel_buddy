@@ -41,6 +41,9 @@ import kotlin.math.sqrt
 actual object PlatformLocation {
     var appContext: Context? = null
     private var lastLocation: RealLocation? = null
+    @Volatile private var lastFixTimeMs: Long = 0L
+    private const val EXCELLENT_ACCURACY_M = 35f
+    private const val GOOD_ACCURACY_M = 100f
     private val activeListeners = CopyOnWriteArraySet<(RealLocation) -> Unit>()
     private var activeListener: LocationListener? = null
     private var activeFusedCallback: LocationCallback? = null
@@ -110,25 +113,37 @@ actual object PlatformLocation {
      * Updates device location directly (e.g. from Google Maps' native blue-dot location changes).
      * 100% non-blocking: never blocks the UI thread.
      */
-    fun updateManualLocation(latitude: Double, longitude: Double, speedKmh: Double = 0.0) {
+    fun updateManualLocation(
+        latitude: Double,
+        longitude: Double,
+        speedKmh: Double = 0.0,
+        accuracyMeters: Float = 25f
+    ) {
         if (latitude == 0.0 && longitude == 0.0) return
 
+        val now = System.currentTimeMillis()
+        val prev = lastLocation
+        if (prev != null && accuracyMeters > 80f && prev.accuracyMeters in 0.1f..EXCELLENT_ACCURACY_M && now - lastFixTimeMs < 20_000L) {
+            return
+        }
+
         val dist = haversineMeters(latitude, longitude, cachedAddressLat, cachedAddressLng)
-        val addr = if (dist < 150.0 && !cachedAddress.isNullOrBlank()) {
+        val addr = if (dist < 15.0 && !cachedAddress.isNullOrBlank()) {
             cachedAddress
         } else {
             triggerAsyncGeocode(latitude, longitude)
-            lastLocation?.address ?: "Pinpoint Location (${round(latitude * 10000.0) / 10000.0}, ${round(longitude * 10000.0) / 10000.0})"
+            null
         }
 
         val realLoc = RealLocation(
             latitude = latitude,
             longitude = longitude,
             address = addr,
-            accuracyMeters = 5f,
+            accuracyMeters = accuracyMeters,
             speedKmh = speedKmh
         )
         lastLocation = realLoc
+        lastFixTimeMs = now
         mainHandler.post {
             activeListeners.forEach { it(realLoc) }
         }
@@ -139,23 +154,28 @@ actual object PlatformLocation {
         val ctx = appContext ?: return
         if (!hasLocationPermission()) return
         try {
+            val now = System.currentTimeMillis()
             val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-            val gpsLoc = lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            val netLoc = lm?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            val passLoc = lm?.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
-            val bestLoc = listOfNotNull(gpsLoc, netLoc, passLoc).maxByOrNull { it.time }
-            if (bestLoc != null && bestLoc.latitude != 0.0) {
-                lastLocation = toRealLocation(bestLoc)
+            val gpsLoc = try { lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER) } catch (_: Exception) { null }
+            val netLoc = try { lm?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) } catch (_: Exception) { null }
+            val passLoc = try { lm?.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER) } catch (_: Exception) { null }
+            val candidates = listOfNotNull(gpsLoc, netLoc, passLoc).filter { it.latitude != 0.0 && it.longitude != 0.0 }
+            // Prefer recent accurate fixes instead of coarse cell-tower fixes
+            val bestLoc = candidates.minByOrNull { loc ->
+                val agePenalty = ((now - loc.time).coerceAtLeast(0L) / 10_000L).toFloat() * 10f
+                val acc = if (loc.hasAccuracy()) loc.accuracy else 200f
+                acc + agePenalty
+            }
+            if (bestLoc != null) {
+                val realLoc = toRealLocation(bestLoc)
+                lastLocation = realLoc
+                lastFixTimeMs = bestLoc.time.coerceAtMost(now)
             }
 
             val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
             fusedClient.lastLocation.addOnSuccessListener { loc ->
                 if (loc != null && loc.latitude != 0.0) {
-                    val realLoc = toRealLocation(loc)
-                    lastLocation = realLoc
-                    mainHandler.post {
-                        activeListeners.forEach { it(realLoc) }
-                    }
+                    acceptTrackingFix(loc)
                 }
             }
         } catch (_: Exception) {}
@@ -180,125 +200,178 @@ actual object PlatformLocation {
         val ctx = appContext ?: return@withContext lastLocation
         if (!hasLocationPermission()) return@withContext lastLocation
 
+        // If continuous tracking already produced a very fresh, precise fix, use it instantly.
+        val current = lastLocation
+        if (current != null && current.latitude != 0.0 &&
+            current.accuracyMeters in 0.1f..EXCELLENT_ACCURACY_M &&
+            System.currentTimeMillis() - lastFixTimeMs < 5_000L
+        ) {
+            return@withContext current
+        }
+
         suspendCancellableCoroutine { cont ->
             val hasResumed = AtomicBoolean(false)
             val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
             val cts = CancellationTokenSource()
 
-            var oneShotListener: LocationListener? = null
-            var oneShotCallback: LocationCallback? = null
+            var gpsListener: LocationListener? = null
+            var fusedCallback: LocationCallback? = null
+            // Best (most accurate) live fix received during this request
+            var bestFix: Location? = null
 
             fun cleanup() {
                 try { cts.cancel() } catch (_: Exception) {}
-                try { oneShotCallback?.let { fusedClient.removeLocationUpdates(it) } } catch (_: Exception) {}
-                try { oneShotListener?.let { lm?.removeUpdates(it) } } catch (_: Exception) {}
+                try { fusedCallback?.let { fusedClient.removeLocationUpdates(it) } } catch (_: Exception) {}
+                try { gpsListener?.let { lm?.removeUpdates(it) } } catch (_: Exception) {}
             }
+
+            lateinit var softTimeout: Runnable
+            lateinit var hardTimeout: Runnable
 
             fun safeResume(loc: RealLocation?) {
                 if (hasResumed.compareAndSet(false, true)) {
+                    mainHandler.removeCallbacks(softTimeout)
+                    mainHandler.removeCallbacks(hardTimeout)
                     cleanup()
                     if (loc != null && loc.latitude != 0.0) {
                         lastLocation = loc
+                        lastFixTimeMs = System.currentTimeMillis()
                         mainHandler.post { activeListeners.forEach { it(loc) } }
                     }
                     if (cont.isActive) cont.resume(loc ?: lastLocation)
                 }
             }
 
-            cont.invokeOnCancellation {
-                cleanup()
+            // Every live fix goes through here: resume instantly when the fix is precise
+            // (like Swiggy/Amazon's "Use current location"), otherwise keep the best one.
+            fun onFix(loc: Location?) {
+                if (loc == null || loc.latitude == 0.0 || hasResumed.get()) return
+                val acc = if (loc.hasAccuracy()) loc.accuracy else 999f
+                val bestAcc = bestFix?.let { if (it.hasAccuracy()) it.accuracy else 999f } ?: Float.MAX_VALUE
+                if (acc <= bestAcc) bestFix = loc
+                if (acc <= EXCELLENT_ACCURACY_M) {
+                    safeResume(toRealLocation(loc))
+                }
             }
 
-            // Check cached location candidates
-            val gpsLoc = lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            val netLoc = lm?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            val passLoc = lm?.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
-            val recentCandidate = listOfNotNull(gpsLoc, netLoc, passLoc)
-                .filter { it.latitude != 0.0 }
-                .maxByOrNull { it.time }
+            cont.invokeOnCancellation { cleanup() }
 
-            // Latch timeout runnable (2000ms max wait)
-            val timeoutRunnable = Runnable {
-                val chosen = recentCandidate?.let { toRealLocation(it) } ?: lastLocation
-                safeResume(chosen)
+            // Soft timeout (1.8s): accept a good fix (<= 100m) if we have one.
+            softTimeout = Runnable {
+                val best = bestFix
+                if (best != null && (!best.hasAccuracy() || best.accuracy <= GOOD_ACCURACY_M)) {
+                    safeResume(toRealLocation(best))
+                }
             }
-            mainHandler.postDelayed(timeoutRunnable, 2000L)
-
-            // 1. Google Play Services Fused Location Client (High Accuracy)
-            fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
-                .addOnSuccessListener { loc ->
-                    if (loc != null && loc.latitude != 0.0) {
-                        mainHandler.removeCallbacks(timeoutRunnable)
-                        safeResume(toRealLocation(loc))
-                    }
+            // Hard timeout (3.5s): return the best live fix, or the most accurate cached fix.
+            hardTimeout = Runnable {
+                val best = bestFix
+                if (best != null) {
+                    safeResume(toRealLocation(best))
+                } else {
+                    val now = System.currentTimeMillis()
+                    val recentCached = listOfNotNull(
+                        try { lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER) } catch (_: Exception) { null },
+                        try { lm?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) } catch (_: Exception) { null },
+                        try { lm?.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER) } catch (_: Exception) { null }
+                    ).filter { it.latitude != 0.0 && now - it.time < 300_000L }
+                        .minByOrNull { if (it.hasAccuracy()) it.accuracy else 999f }
+                    safeResume(recentCached?.let { toRealLocation(it) } ?: lastLocation)
                 }
-                .addOnFailureListener {
-                    // Handled by active listener or timeout
-                }
+            }
+            mainHandler.postDelayed(softTimeout, 1_800L)
+            mainHandler.postDelayed(hardTimeout, 3_500L)
 
-            // 2. Active single-update listener on FusedClient
+            // 1. Fused single high-accuracy fix
+            try {
+                val currentReq = com.google.android.gms.location.CurrentLocationRequest.Builder()
+                    .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
+                    .setMaxUpdateAgeMillis(2_000L)
+                    .setDurationMillis(3_500L)
+                    .build()
+                fusedClient.getCurrentLocation(currentReq, cts.token)
+                    .addOnSuccessListener { loc -> onFix(loc) }
+            } catch (_: Exception) {}
+
+            // 2. Continuous fused stream during the request window (do not wait indoors)
             try {
                 val callback = object : LocationCallback() {
                     override fun onLocationResult(result: LocationResult) {
-                        val loc = result.lastLocation ?: return
-                        if (loc.latitude != 0.0) {
-                            mainHandler.removeCallbacks(timeoutRunnable)
-                            safeResume(toRealLocation(loc))
-                        }
+                        result.locations.forEach { onFix(it) }
                     }
                 }
-                oneShotCallback = callback
-                val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 500L)
-                    .setMaxUpdates(1)
+                fusedCallback = callback
+                val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 400L)
                     .setMinUpdateIntervalMillis(200L)
+                    .setMinUpdateDistanceMeters(0f)
+                    .setWaitForAccurateLocation(false)
                     .build()
                 fusedClient.requestLocationUpdates(req, callback, Looper.getMainLooper())
             } catch (_: Exception) {}
 
-            // 3. Hardware GPS provider direct listener
+            // 3. Hardware GPS + Network listeners (with 0m distance so stationary devices emit immediately)
             try {
-                if (lm != null && lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                if (lm != null) {
                     val lnr = object : LocationListener {
-                        override fun onLocationChanged(loc: Location) {
-                            if (loc.latitude != 0.0) {
-                                mainHandler.removeCallbacks(timeoutRunnable)
-                                safeResume(toRealLocation(loc))
-                            }
-                        }
+                        override fun onLocationChanged(loc: Location) { onFix(loc) }
                         @Deprecated("Deprecated in Java")
                         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
                         override fun onProviderEnabled(provider: String) {}
                         override fun onProviderDisabled(provider: String) {}
                     }
-                    oneShotListener = lnr
-                    lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 500L, 0f, lnr, Looper.getMainLooper())
+                    gpsListener = lnr
+                    if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                        lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 400L, 0f, lnr, Looper.getMainLooper())
+                    }
+                    if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                        lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 400L, 0f, lnr, Looper.getMainLooper())
+                    }
                 }
             } catch (_: Exception) {}
         }
     }
 
+    /**
+     * Accepts a continuous-tracking fix unless it is a coarse (cell/wifi) fix that would make
+     * the user's marker jump away from a recent precise GPS position.
+     */
+    private fun acceptTrackingFix(loc: Location) {
+        if (loc.latitude == 0.0) return
+        val acc = if (loc.hasAccuracy()) loc.accuracy else 999f
+        val prev = lastLocation
+        val now = System.currentTimeMillis()
+        if (prev != null && acc > 100f && prev.accuracyMeters in 0.1f..GOOD_ACCURACY_M && now - lastFixTimeMs < 30_000L) {
+            return
+        }
+        val realLoc = toRealLocation(loc)
+        lastLocation = realLoc
+        lastFixTimeMs = now
+        mainHandler.post { activeListeners.forEach { it(realLoc) } }
+    }
+
     @SuppressLint("MissingPermission")
     fun startContinuousTracking() {
         val ctx = appContext ?: return
-        if (!hasLocationPermission() || isTrackingStarted) return
+        if (!hasLocationPermission()) return
+        if (lastLocation == null) {
+            fetchCachedLocation()
+        }
+        if (isTrackingStarted) return
         isTrackingStarted = true
 
         try {
             val fusedClient = LocationServices.getFusedLocationProviderClient(ctx)
-            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L).apply {
-                setMinUpdateIntervalMillis(1500L)
-                setMinUpdateDistanceMeters(2f)
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1500L).apply {
+                setMinUpdateIntervalMillis(800L)
+                setMinUpdateDistanceMeters(0f)
+                setWaitForAccurateLocation(false)
             }.build()
 
             val callback = object : LocationCallback() {
                 override fun onLocationResult(result: LocationResult) {
                     val loc = result.lastLocation ?: return
-                    if (loc.latitude != 0.0) {
-                        val realLoc = toRealLocation(loc)
-                        lastLocation = realLoc
-                        mainHandler.post { activeListeners.forEach { it(realLoc) } }
-                    }
+                    acceptTrackingFix(loc)
                 }
             }
             activeFusedCallback = callback
@@ -309,11 +382,7 @@ actual object PlatformLocation {
             val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
             val listener = object : LocationListener {
                 override fun onLocationChanged(location: Location) {
-                    if (location.latitude != 0.0) {
-                        val realLoc = toRealLocation(location)
-                        lastLocation = realLoc
-                        mainHandler.post { activeListeners.forEach { it(realLoc) } }
-                    }
+                    acceptTrackingFix(location)
                 }
 
                 @Deprecated("Deprecated in Java")
@@ -324,7 +393,10 @@ actual object PlatformLocation {
             activeListener = listener
 
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 2f, listener, Looper.getMainLooper())
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1500L, 0f, listener, Looper.getMainLooper())
+            }
+            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 0f, listener, Looper.getMainLooper())
             }
         } catch (_: Exception) {}
     }
@@ -336,6 +408,11 @@ actual object PlatformLocation {
         startContinuousTracking()
     }
 
+    /** Removes only this listener (other screens keep receiving live updates). */
+    actual fun removeLocationListener(onUpdate: (RealLocation) -> Unit) {
+        activeListeners.remove(onUpdate)
+    }
+
     actual fun stopLocationUpdates() {
         activeListeners.clear()
     }
@@ -344,6 +421,8 @@ actual object PlatformLocation {
         val ctx = appContext ?: return null
         val clean = addressText.trim()
         if (clean.isBlank()) return null
+        // Never block the Android UI thread with synchronous network/binder geocoding
+        if (Looper.myLooper() == Looper.getMainLooper()) return null
 
         // 1. Native Geocoder
         return try {
@@ -376,9 +455,7 @@ actual object PlatformLocation {
                     null
                 }
             }
-            // If on main thread, do not block the UI (max 100ms), background callers can wait up to 2500ms
-            val timeout = if (Looper.myLooper() == Looper.getMainLooper()) 100L else 2500L
-            future.get(timeout, TimeUnit.MILLISECONDS)
+            future.get(2500L, TimeUnit.MILLISECONDS)
         } catch (_: Exception) {
             null
         }
@@ -430,58 +507,86 @@ actual object PlatformLocation {
         if (latitude == 0.0 && longitude == 0.0) return null
 
         val dist = haversineMeters(latitude, longitude, cachedAddressLat, cachedAddressLng)
-        if (dist < 150.0 && !cachedAddress.isNullOrBlank()) {
+        if (dist < 15.0 && !cachedAddress.isNullOrBlank()) {
             return cachedAddress
         }
 
         // If called on main thread, do NOT block the UI looper!
+        // Never return a stale address cached for a different (nearby) position.
         if (Looper.myLooper() == Looper.getMainLooper()) {
             triggerAsyncGeocode(latitude, longitude)
-            return cachedAddress ?: "Pinpoint Location (${round(latitude * 10000.0) / 10000.0}, ${round(longitude * 10000.0) / 10000.0})"
+            return "Pinpoint Location (${round(latitude * 100000.0) / 100000.0}, ${round(longitude * 100000.0) / 100000.0})"
         }
 
-        return doBackgroundReverseGeocode(latitude, longitude)
+        val resolved = doBackgroundReverseGeocode(latitude, longitude)
+        if (!resolved.isNullOrBlank() && !resolved.startsWith("Pinpoint")) {
+            cachedAddress = resolved
+            cachedAddressLat = latitude
+            cachedAddressLng = longitude
+        }
+        return resolved
     }
 
     private fun doBackgroundReverseGeocode(latitude: Double, longitude: Double): String? {
         val ctx = appContext ?: return null
         if (latitude == 0.0 && longitude == 0.0) return null
 
-        // 1. Native Geocoder
+        var nativeCandidate: String? = null
+
+        // 1. Native Geocoder: inspect up to 5 candidates and pick the most specific street/premise address
         try {
             val geocoder = Geocoder(ctx, Locale.getDefault())
             @Suppress("DEPRECATION")
-            val matches = geocoder.getFromLocation(latitude, longitude, 1)
+            val matches = geocoder.getFromLocation(latitude, longitude, 5)
             if (!matches.isNullOrEmpty()) {
-                val addr = matches[0]
-                val feature = addr.featureName
-                val thoroughfare = addr.thoroughfare
-                val subLocality = addr.subLocality
-                val locality = addr.locality ?: addr.subAdminArea ?: addr.adminArea
-                val fullAddress = addr.getAddressLine(0)
+                val bestAddr = matches.maxByOrNull { candidate ->
+                    var score = 0
+                    if (!candidate.subThoroughfare.isNullOrBlank()) score += 4
+                    if (!candidate.thoroughfare.isNullOrBlank()) score += 4
+                    if (!candidate.featureName.isNullOrBlank() && !candidate.featureName.contains("+")) score += 2
+                    if (!candidate.subLocality.isNullOrBlank()) score += 3
+                    if (!candidate.locality.isNullOrBlank()) score += 1
+                    score
+                } ?: matches[0]
 
-                val street = when {
-                    !thoroughfare.isNullOrBlank() && !subLocality.isNullOrBlank() && thoroughfare != subLocality -> "$thoroughfare, $subLocality"
-                    !thoroughfare.isNullOrBlank() -> thoroughfare
-                    !subLocality.isNullOrBlank() -> subLocality
-                    !feature.isNullOrBlank() && !feature.matches(Regex("""\d+""")) -> feature
-                    else -> null
+                val fullAddress = bestAddr.getAddressLine(0)
+                if (!fullAddress.isNullOrBlank()) {
+                    val parts = fullAddress.split(",").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+                    val country = bestAddr.countryName
+                    if (parts.size > 2 && !country.isNullOrBlank() && parts.last().equals(country, ignoreCase = true)) {
+                        parts.removeAt(parts.lastIndex)
+                    }
+                    // Strip a leading Plus Code (e.g. "7J4V+2C" or "XMPW+89") which is not human readable
+                    if (parts.size > 1 && parts.first().contains("+")) {
+                        parts.removeAt(0)
+                    }
+                    val exact = parts.take(5).joinToString(", ")
+                    if (exact.isNotBlank()) {
+                        val hasStreetDetail = !bestAddr.thoroughfare.isNullOrBlank() ||
+                            !bestAddr.subThoroughfare.isNullOrBlank() ||
+                            parts.size >= 4
+                        if (hasStreetDetail) return exact
+                        nativeCandidate = exact
+                    }
                 }
-
-                val resolved = when {
-                    street != null && !locality.isNullOrBlank() -> "$street, $locality"
-                    street != null -> street
-                    !fullAddress.isNullOrBlank() -> fullAddress.split(",").take(3).joinToString(",").trim()
-                    !locality.isNullOrBlank() -> locality
-                    else -> fullAddress
+                if (nativeCandidate == null) {
+                    val thoroughfare = bestAddr.thoroughfare
+                    val subLocality = bestAddr.subLocality
+                    val locality = bestAddr.locality ?: bestAddr.subAdminArea ?: bestAddr.adminArea
+                    val composed = listOfNotNull(
+                        bestAddr.subThoroughfare, thoroughfare, subLocality, locality
+                    ).filter { it.isNotBlank() }.distinct().joinToString(", ")
+                    if (composed.isNotBlank()) {
+                        if (!thoroughfare.isNullOrBlank()) return composed
+                        nativeCandidate = composed
+                    }
                 }
-                if (!resolved.isNullOrBlank()) return resolved
             }
         } catch (_: Exception) {}
 
-        // 2. HTTP Reverse Geocoding Fallback (OSM Nominatim)
+        // 2. HTTP Reverse Geocoding Fallback (OSM Nominatim zoom=18 for exact building/layout/street)
         try {
-            val url = URL("https://nominatim.openstreetmap.org/reverse?lat=$latitude&lon=$longitude&format=json&accept-language=en")
+            val url = URL("https://nominatim.openstreetmap.org/reverse?lat=$latitude&lon=$longitude&format=json&zoom=18&addressdetails=0&accept-language=en")
             val conn = url.openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "TravelBuddy-App/1.0")
             conn.connectTimeout = 2000
@@ -491,10 +596,12 @@ actual object PlatformLocation {
                 val regex = Regex(""""display_name"\s*:\s*"([^"]+)"""")
                 val match = regex.find(text)
                 val full = match?.groupValues?.get(1)?.replace("\\", "")
-                val formatted = full?.split(",")?.take(3)?.joinToString(",")?.trim()
+                val formatted = full?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.take(5)?.joinToString(", ")
                 if (!formatted.isNullOrBlank()) return formatted
             }
         } catch (_: Exception) {}
+
+        if (!nativeCandidate.isNullOrBlank()) return nativeCandidate
 
         return "Pinpoint Location (${round(latitude * 10000.0) / 10000.0}, ${round(longitude * 10000.0) / 10000.0})"
     }
@@ -505,11 +612,11 @@ actual object PlatformLocation {
     private fun toRealLocation(loc: Location): RealLocation {
         val speedKmh = if (loc.hasSpeed()) (loc.speed * 3.6) else 0.0
         val dist = haversineMeters(loc.latitude, loc.longitude, cachedAddressLat, cachedAddressLng)
-        val address = if (dist < 150.0 && !cachedAddress.isNullOrBlank()) {
+        val address = if (dist < 15.0 && !cachedAddress.isNullOrBlank()) {
             cachedAddress
         } else {
             triggerAsyncGeocode(loc.latitude, loc.longitude)
-            lastLocation?.address ?: "Pinpoint Location (${round(loc.latitude * 10000.0) / 10000.0}, ${round(loc.longitude * 10000.0) / 10000.0})"
+            null
         }
 
         return RealLocation(
