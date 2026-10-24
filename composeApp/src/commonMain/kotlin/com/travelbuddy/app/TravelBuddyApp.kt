@@ -21,8 +21,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -107,6 +111,8 @@ import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.material.icons.filled.Lock
@@ -1537,6 +1543,8 @@ private fun TripsScreen(
     var tripPendingDelete by remember { mutableStateOf<Trip?>(null) }
     val darkMode = LocalTravelBuddyDarkMode.current
     val clipboardManager = LocalClipboardManager.current
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     val visibleTrips = remember(trips) {
         val deleted = TripStorage.getDeletedTripIds()
         trips.filter { 
@@ -1549,29 +1557,66 @@ private fun TripsScreen(
         }.distinctBy { it.id }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 100.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Your Trips",
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = tbTextColor()
-                    )
-                    Text(
-                        text = "${visibleTrips.size} total trips • Tap to switch active trip",
-                        fontSize = 13.sp,
-                        color = tbSubtextColor()
-                    )
-                }
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 110.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Your Trips",
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = tbTextColor()
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) {
+                            Text(
+                                text = "${visibleTrips.size} total trips",
+                                fontSize = 13.sp,
+                                color = tbSubtextColor()
+                            )
+                            if (visibleTrips.size > 1) {
+                                Spacer(Modifier.width(8.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (darkMode) Color(0xFF1E293B) else Color(0xFFEFF6FF),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (darkMode) Color(0xFF334155) else Color(0xFFBFDBFE)
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.SwapVert,
+                                            contentDescription = null,
+                                            tint = Blue,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            text = "Scroll down for more",
+                                            fontSize = 11.sp,
+                                            color = Blue,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Surface(
                         shape = RoundedCornerShape(14.dp),
@@ -1911,6 +1956,119 @@ private fun TripsScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+
+        if (visibleTrips.isNotEmpty()) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.width(36.dp).height(1.dp).background(if (darkMode) Color(0xFF334155) else Color(0xFFCBD5E1)))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "End of trips list • ${visibleTrips.size} total",
+                        fontSize = 11.sp,
+                        color = tbSubtextColor(),
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(Modifier.width(36.dp).height(1.dp).background(if (darkMode) Color(0xFF334155) else Color(0xFFCBD5E1)))
+                }
+            }
+        }
+    }
+
+        // 1. Persistent Sleek Scrollbar Indicator on the right edge
+        if (visibleTrips.size > 1) {
+            val total = listState.layoutInfo.totalItemsCount
+            val visible = listState.layoutInfo.visibleItemsInfo.size
+            if (total > visible && total > 0) {
+                val fraction = (listState.firstVisibleItemIndex.toFloat() / (total - visible).coerceAtLeast(1)).coerceIn(0f, 1f)
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxHeight()
+                        .width(10.dp)
+                        .padding(top = 70.dp, bottom = 100.dp, end = 2.dp)
+                ) {
+                    val trackHeight = maxHeight
+                    val thumbHeight = (trackHeight * (visible.toFloat() / total.toFloat())).coerceIn(36.dp, 120.dp)
+                    val maxTravel = trackHeight - thumbHeight
+                    val thumbOffset = maxTravel * fraction
+
+                    // Track background
+                    Box(
+                        modifier = Modifier
+                            .width(4.dp)
+                            .fillMaxHeight()
+                            .align(Alignment.Center)
+                            .background(
+                                color = if (darkMode) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f),
+                                shape = CircleShape
+                            )
+                    )
+
+                    // Moving thumb
+                    Box(
+                        modifier = Modifier
+                            .width(6.dp)
+                            .height(thumbHeight)
+                            .offset(y = thumbOffset)
+                            .align(Alignment.TopCenter)
+                            .background(
+                                color = Blue,
+                                shape = CircleShape
+                            )
+                    )
+                }
+            }
+        }
+
+        // 2. Interactive Floating Scroll-Down Helper Pill
+        androidx.compose.animation.AnimatedVisibility(
+            visible = listState.canScrollForward && visibleTrips.size > 1,
+            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { it / 2 },
+            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { it / 2 },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 80.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = if (darkMode) Color(0xFF1E293B) else Color(0xFF0F172A),
+                shadowElevation = 8.dp,
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (darkMode) Color(0xFF334155) else Color(0xFF334155)
+                ),
+                modifier = Modifier.clickable {
+                    scope.launch {
+                        val nextIndex = (listState.firstVisibleItemIndex + 1).coerceAtMost(visibleTrips.size)
+                        listState.animateScrollToItem(nextIndex)
+                    }
+                }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "More trips below • Tap to scroll ↓",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
         }
