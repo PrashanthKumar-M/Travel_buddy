@@ -179,7 +179,7 @@ fun LiveGoogleMapView(
             )
 
             // Overlaid UI Chrome
-            // 1. Top HUD: Vehicle Route Summary & Fullscreen Toggle
+            // 1. Top HUD: Vehicle Route Summary & Fullscreen Toggle (Solid background prevents map markers shining through)
             Surface(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -187,7 +187,7 @@ fun LiveGoogleMapView(
                     .then(if (isFullscreen) Modifier.statusBarsPadding().padding(top = 8.dp) else Modifier.padding(top = 8.dp))
                     .padding(horizontal = 10.dp),
                 shape = RoundedCornerShape(14.dp),
-                color = (if (darkMode) Color(0xFF1E293B) else Color.White).copy(alpha = 0.94f),
+                color = if (darkMode) Color(0xFF1E293B) else Color.White,
                 shadowElevation = 4.dp
             ) {
                 Row(
@@ -212,25 +212,31 @@ fun LiveGoogleMapView(
                                 },
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (darkMode) Color.White else Color(0xFF1E293B)
+                                color = if (darkMode) Color.White else Color(0xFF1E293B),
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                         }
                         Spacer(Modifier.height(2.dp))
+                        val cleanSrc = sourceName.substringBefore("(").trim().ifBlank { sourceName.trim() }
+                        val cleanDst = destinationName.substringBefore("(").trim().ifBlank { destinationName.trim() }
                         Text(
                             text = if (hasValidDestination) {
-                                "$sourceName ➔ $destinationName"
+                                "$cleanSrc ➔ $cleanDst"
                             } else {
                                 val locAddr = realLocationState.value?.address
                                 if (!locAddr.isNullOrBlank()) locAddr
-                                else if (sourceName.isNotBlank() && sourceName != "Starting Point") sourceName
+                                else if (cleanSrc.isNotBlank() && cleanSrc != "Starting Point") cleanSrc
                                 else "Bengaluru, India"
                             },
-                            fontSize = 10.sp,
+                            fontSize = 11.sp,
                             color = Color(0xFF1A73E8),
                             fontWeight = FontWeight.SemiBold,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
+                    Spacer(Modifier.width(8.dp))
 
                     if (onToggleFullscreen != null) {
                         if (isFullscreen) {

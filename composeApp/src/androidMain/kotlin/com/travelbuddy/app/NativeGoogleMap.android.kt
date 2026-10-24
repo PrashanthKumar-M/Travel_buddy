@@ -84,6 +84,8 @@ actual fun NativeGoogleMapView(
                 mapView.apply {
                     getMapAsync { map ->
                         googleMapInstance = map
+                        val density = context.resources.displayMetrics.density
+                        map.setPadding(0, (68 * density).toInt(), 0, (15 * density).toInt())
                         map.uiSettings.isZoomControlsEnabled = false // using custom floating controls
                         map.uiSettings.isCompassEnabled = true
                         map.uiSettings.isMyLocationButtonEnabled = false
