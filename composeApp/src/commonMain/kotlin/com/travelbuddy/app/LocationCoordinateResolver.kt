@@ -195,6 +195,39 @@ object LocationCoordinateResolver {
     }
 
     /**
+     * Converts exact GPS lat/long coordinates to a human-readable city or locality name.
+     * Uses platform reverse geocoder if available, otherwise identifies the nearest city or locality.
+     */
+    fun resolveNearestCityOrArea(latitude: Double, longitude: Double): String {
+        if (latitude == 0.0 && longitude == 0.0) return "Bengaluru"
+        // 1. Try platform reverse geocode
+        try {
+            val geocoded = PlatformLocation.reverseGeocode(latitude, longitude)
+            if (!geocoded.isNullOrBlank()) {
+                return geocoded
+            }
+        } catch (_: Exception) {}
+
+        // 2. Identify nearest city or locality from dictionary
+        var minDistanceKm = Double.MAX_VALUE
+        var closestPlace = "Bengaluru"
+        for ((name, coords) in cityCoordinates) {
+            val dist = haversineDistanceKm(latitude, longitude, coords.first, coords.second)
+            if (dist < minDistanceKm) {
+                minDistanceKm = dist
+                closestPlace = name
+            }
+        }
+
+        val formatted = closestPlace.split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+        return when {
+            minDistanceKm <= 15.0 -> formatted
+            minDistanceKm <= 40.0 -> "$formatted, Karnataka"
+            else -> "$formatted Region"
+        }
+    }
+
+    /**
      * Calculates authentic road driving distance in kilometers.
      * Straight-line distance multiplied by the average Indian highway road tortuosity factor (1.24x).
      */

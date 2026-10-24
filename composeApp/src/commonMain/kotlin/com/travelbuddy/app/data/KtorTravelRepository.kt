@@ -123,6 +123,7 @@ class KtorTravelRepository(
             val cover = obj["coverImage"]?.jsonPrimitive?.contentOrNull
             val vType = obj["vehicleType"]?.jsonPrimitive?.contentOrNull ?: "CAR"
             val tripCode = obj["tripCode"]?.jsonPrimitive?.contentOrNull ?: id
+            val createdBy = obj["createdBy"]?.jsonPrimitive?.contentOrNull ?: obj["creator"]?.jsonPrimitive?.contentOrNull ?: ""
             val members = obj["members"]?.jsonArray?.mapNotNull { m ->
                 val mObj = m.jsonObject
                 val mId = mObj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
@@ -134,7 +135,7 @@ class KtorTravelRepository(
                 val avatar = mObj["avatarType"]?.jsonPrimitive?.contentOrNull ?: "MALE_1"
                 TripMember(mId, mName, 0xFF2F80ED, true, lat, lng, speed, battery, avatar)
             } ?: emptyList()
-            Trip(id, name, src, dst, dates, TripStatus.LIVE, members, coverImage = cover, vehicleType = vType, tripCode = tripCode)
+            Trip(id, name, src, dst, dates, TripStatus.LIVE, members, coverImage = cover, vehicleType = vType, tripCode = tripCode, createdBy = createdBy)
         }
     }
 
@@ -230,6 +231,9 @@ private fun String.toTripOrFallback(request: CreateTripRequest?, expectedId: Str
     val fallbackDynamicId = request?.id ?: "trip-${(100000..999999).random()}"
     val tripId = json?.get("id")?.jsonPrimitive?.contentOrNull ?: expectedId.ifBlank { fallbackDynamicId }
     val tripCode = json?.get("tripCode")?.jsonPrimitive?.contentOrNull ?: expectedId.ifBlank { tripId }
+    val createdBy = json?.get("createdBy")?.jsonPrimitive?.contentOrNull
+        ?: json?.get("creator")?.jsonPrimitive?.contentOrNull
+        ?: request?.createdBy ?: ""
     return Trip(
         id = tripId,
         name = json?.get("name")?.jsonPrimitive?.contentOrNull ?: json?.get("tripName")?.jsonPrimitive?.contentOrNull ?: request?.tripName ?: "Live trip",
@@ -240,7 +244,8 @@ private fun String.toTripOrFallback(request: CreateTripRequest?, expectedId: Str
         members = members,
         coverImage = json?.get("coverImage")?.jsonPrimitive?.contentOrNull ?: request?.coverImage,
         vehicleType = vType,
-        tripCode = tripCode
+        tripCode = tripCode,
+        createdBy = createdBy
     )
 }
 

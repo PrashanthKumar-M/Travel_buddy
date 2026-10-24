@@ -368,18 +368,19 @@ private fun renderGoogleMapContent(
         val memberName = member.name.trim().lowercase().substringBefore("@")
         val isYou = (mySessionName.isNotBlank() && (memberName == mySessionName || memberName.contains(mySessionName) || mySessionName.contains(memberName))) || (index == 0 && mySessionName.isBlank())
 
-        // Real GPS positioning without synthetic distortion or city defaults:
-        val latLng: LatLng = if (isYou && currLat != 0.0 && currLng != 0.0) {
+        // Authentic GPS positioning:
+        val latLng: LatLng? = if (isYou && currLat != 0.0 && currLng != 0.0) {
             LatLng(currLat, currLng)
         } else if (rawLat != null && rawLng != null && rawLat != 0.0 && rawLng != 0.0) {
             LatLng(rawLat, rawLng)
-        } else if (isYou && currLat != 0.0 && currLng != 0.0) {
-            LatLng(currLat, currLng)
-        } else if (currLat != 0.0 && currLng != 0.0) {
-            LatLng(currLat + (index * 0.002), currLng + (index * 0.002))
+        } else if (isYou && rawLat != null && rawLng != null && rawLat != 0.0 && rawLng != 0.0) {
+            LatLng(rawLat, rawLng)
         } else {
-            LatLng(srcLat + (index * 0.002), srcLng + (index * 0.002))
+            // Do NOT place remote co-travelers into Bengaluru or at fake offsets:
+            null
         }
+
+        if (latLng == null) return@forEachIndexed
 
         travelerPositions.add(Pair(member, latLng))
         boundsBuilder.include(latLng)

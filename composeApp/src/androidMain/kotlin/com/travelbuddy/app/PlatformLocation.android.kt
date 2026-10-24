@@ -209,23 +209,30 @@ actual object PlatformLocation {
     actual fun reverseGeocode(latitude: Double, longitude: Double): String? {
         val ctx = appContext ?: return null
         return try {
-            val geocoder = Geocoder(ctx, Locale.getDefault())
-            @Suppress("DEPRECATION")
-            val matches = geocoder.getFromLocation(latitude, longitude, 1)
-            if (!matches.isNullOrEmpty()) {
-                val addr = matches[0]
-                val subLocality = addr.subLocality ?: addr.thoroughfare ?: addr.featureName
-                val locality = addr.locality ?: addr.subAdminArea ?: addr.adminArea
-                val fullAddress = addr.getAddressLine(0)
+            val future = java.util.concurrent.CompletableFuture.supplyAsync {
+                try {
+                    val geocoder = Geocoder(ctx, Locale.getDefault())
+                    @Suppress("DEPRECATION")
+                    val matches = geocoder.getFromLocation(latitude, longitude, 1)
+                    if (!matches.isNullOrEmpty()) {
+                        val addr = matches[0]
+                        val subLocality = addr.subLocality ?: addr.thoroughfare ?: addr.featureName
+                        val locality = addr.locality ?: addr.subAdminArea ?: addr.adminArea
+                        val fullAddress = addr.getAddressLine(0)
 
-                when {
-                    !subLocality.isNullOrBlank() && !locality.isNullOrBlank() -> "$subLocality, $locality"
-                    !fullAddress.isNullOrBlank() -> fullAddress.split(",").take(2).joinToString(",").trim()
-                    !locality.isNullOrBlank() -> locality
-                    !subLocality.isNullOrBlank() -> subLocality
-                    else -> fullAddress
+                        when {
+                            !subLocality.isNullOrBlank() && !locality.isNullOrBlank() -> "$subLocality, $locality"
+                            !fullAddress.isNullOrBlank() -> fullAddress.split(",").take(2).joinToString(",").trim()
+                            !locality.isNullOrBlank() -> locality
+                            !subLocality.isNullOrBlank() -> subLocality
+                            else -> fullAddress
+                        }
+                    } else null
+                } catch (_: Exception) {
+                    null
                 }
-            } else null
+            }
+            future.get(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (_: Exception) {
             null
         }
@@ -234,6 +241,7 @@ actual object PlatformLocation {
     private fun toRealLocation(loc: Location): RealLocation {
         val speedKmh = if (loc.hasSpeed()) (loc.speed * 3.6) else 0.0
         val address = reverseGeocode(loc.latitude, loc.longitude)
+            ?: LocationCoordinateResolver.resolveNearestCityOrArea(loc.latitude, loc.longitude)
         return RealLocation(
             latitude = loc.latitude,
             longitude = loc.longitude,

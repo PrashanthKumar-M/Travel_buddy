@@ -526,8 +526,7 @@ public class TravelBuddyStateService {
                 String mShort = mNameNorm.contains("@") ? mNameNorm.substring(0, mNameNorm.indexOf('@')) : mNameNorm;
 
                 boolean match = mIdNorm.equals(reqNorm) || mNameNorm.equals(reqNorm)
-                        || (!reqShort.isEmpty() && (mShort.equals(reqShort) || mIdNorm.equals(reqShort) || mNameNorm.equals(reqShort)))
-                        || (trip.members().size() == 1);
+                        || (!reqShort.isEmpty() && (mShort.equals(reqShort) || mIdNorm.equals(reqShort) || mNameNorm.equals(reqShort)));
 
                 if (match) {
                     found = true;

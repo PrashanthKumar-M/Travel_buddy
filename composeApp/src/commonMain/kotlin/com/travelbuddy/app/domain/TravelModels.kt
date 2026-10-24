@@ -10,7 +10,8 @@ data class Trip(
     val members: List<TripMember>,
     val coverImage: String? = null,
     val vehicleType: String = "CAR", // "CAR", "BIKE", "CYCLE"
-    val tripCode: String = id
+    val tripCode: String = id,
+    val createdBy: String = ""
 )
 
 enum class TripStatus { PLANNING, LIVE, COMPLETED }

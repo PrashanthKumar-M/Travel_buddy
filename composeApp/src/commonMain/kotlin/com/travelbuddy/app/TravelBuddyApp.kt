@@ -233,7 +233,7 @@ internal fun TravelBuddyMain(
             if (validTrips.isNotEmpty()) {
                 trips = validTrips
                 activeTrip = validTrips.first()
-                members = deduplicateTripMembers(activeTrip!!.members, currentUserName)
+                members = deduplicateTripMembers(activeTrip!!.members, currentUserName, activeTrip!!.createdBy)
                 activeTripCover = activeTrip!!.coverImage
                 apiMessage = "Connected to backend • ${trips.size} trips synced"
             } else {
@@ -436,7 +436,7 @@ internal fun TravelBuddyMain(
                                 if (trip.id == activeTrip?.id) {
                                     if (remaining.isNotEmpty()) {
                                         activeTrip = remaining.first()
-                                        members = deduplicateTripMembers(activeTrip!!.members, currentUserName)
+                                        members = deduplicateTripMembers(activeTrip!!.members, currentUserName, activeTrip!!.createdBy)
                                     } else {
                                         activeTrip = null
                                         members = starterMembers
@@ -462,7 +462,8 @@ internal fun TravelBuddyMain(
                                         status = TripStatus.PLANNING,
                                         members = tripMembers,
                                         coverImage = draft.coverImage,
-                                        vehicleType = draft.vehicleType
+                                        vehicleType = draft.vehicleType,
+                                        createdBy = currentUserName.ifBlank { "You" }
                                     )
                                     activeTrip = localTrip
                                     trips = trips + localTrip
@@ -497,7 +498,7 @@ internal fun TravelBuddyMain(
                                     )
                                     repository.createTrip(request)
                                         .onSuccess { trip ->
-                                            val finalTrip = if (trip.members.isEmpty()) trip.copy(members = tripMembers) else trip
+                                            val finalTrip = (if (trip.members.isEmpty()) trip.copy(members = tripMembers) else trip).copy(createdBy = trip.createdBy.ifBlank { myCreatorName })
                                             activeTrip = finalTrip
                                             trips = trips + finalTrip
                                             members = finalTrip.members
@@ -505,6 +506,23 @@ internal fun TravelBuddyMain(
                                             draft.coverImage?.let { tripCovers = tripCovers + (trip.id to it) }
                                             selectedTab = AppTab.Track
                                             apiMessage = "Trip created live on Render server! (ID: ${trip.id})"
+                                            // Immediately push creator's live GPS coordinates
+                                            scope.launch {
+                                                val loc = PlatformLocation.fetchFreshLocation() ?: PlatformLocation.getCurrentLocation()
+                                                if (loc != null && loc.latitude != 0.0) {
+                                                    repository.updateLocation(
+                                                        LocationUpdateRequest(
+                                                            tripId = trip.id,
+                                                            userId = myCreatorName,
+                                                            latitude = loc.latitude,
+                                                            longitude = loc.longitude,
+                                                            speed = loc.speedKmh,
+                                                            battery = PlatformBattery.getBatteryLevel(),
+                                                            timestamp = System.currentTimeMillis()
+                                                        )
+                                                    )
+                                                }
+                                            }
                                         }
                                         .onFailure { apiMessage = "Could not create trip: ${it.message ?: "unknown error"}" }
                                 }
@@ -513,30 +531,57 @@ internal fun TravelBuddyMain(
                                 val cleanId = enteredId.trim()
                                 val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "Traveler" } }
                                 scope.launch {
+                                    val freshGps = PlatformLocation.fetchFreshLocation() ?: PlatformLocation.getCurrentLocation()
                                     repository.joinTrip(cleanId, myName, myName)
                                         .onSuccess { joinedTrip ->
-                                            val clean = deduplicateTripMembers(joinedTrip.members, myName)
+                                            val clean = deduplicateTripMembers(joinedTrip.members, myName, joinedTrip.createdBy)
                                             val synced = joinedTrip.copy(members = clean)
                                             trips = trips.filterNot { it.id == synced.id } + synced
                                             activeTrip = synced
                                             members = clean
                                             selectedTab = AppTab.Track
                                             apiMessage = "Joined '${synced.name}' (${clean.size} travelers)! Live tracking active."
+                                            if (freshGps != null && freshGps.latitude != 0.0) {
+                                                repository.updateLocation(
+                                                    LocationUpdateRequest(
+                                                        tripId = synced.id,
+                                                        userId = myName,
+                                                        latitude = freshGps.latitude,
+                                                        longitude = freshGps.longitude,
+                                                        speed = freshGps.speedKmh,
+                                                        battery = PlatformBattery.getBatteryLevel(),
+                                                        timestamp = System.currentTimeMillis()
+                                                    )
+                                                )
+                                            }
                                         }
                                         .onFailure {
                                             repository.getTrips().onSuccess { fetched ->
                                                 val matched = fetched.firstOrNull { it.id.equals(cleanId, ignoreCase = true) || it.tripCode.equals(cleanId, ignoreCase = true) }
                                                 if (matched != null) {
                                                     val updatedMembers = if (matched.members.none { it.name.trim().lowercase().substringBefore("@") == myName.trim().lowercase().substringBefore("@") }) {
-                                                        matched.members + TripMember(myName, myName, 0xFF1D64F2L, true)
+                                                        matched.members + TripMember(myName, myName, 0xFF1D64F2L, true, latitude = freshGps?.latitude, longitude = freshGps?.longitude, speedKmh = freshGps?.speedKmh)
                                                     } else matched.members
-                                                    val clean = deduplicateTripMembers(updatedMembers, myName)
+                                                    val clean = deduplicateTripMembers(updatedMembers, myName, matched.createdBy)
                                                     val finalTrip = matched.copy(members = clean)
                                                     trips = trips.filterNot { it.id == finalTrip.id } + finalTrip
                                                     activeTrip = finalTrip
                                                     members = clean
                                                     selectedTab = AppTab.Track
                                                     apiMessage = "Joined '${finalTrip.name}' (ID: ${finalTrip.id})! Live tracking active."
+                                                    if (freshGps != null && freshGps.latitude != 0.0) {
+                                                        repository.updateLocation(
+                                                            LocationUpdateRequest(
+                                                                tripId = finalTrip.id,
+                                                                userId = myName,
+                                                                latitude = freshGps.latitude,
+                                                                longitude = freshGps.longitude,
+                                                                speed = freshGps.speedKmh,
+                                                                battery = PlatformBattery.getBatteryLevel(),
+                                                                timestamp = System.currentTimeMillis()
+                                                            )
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -1893,10 +1938,8 @@ private fun CreateTripDialog(
         if (source.isBlank()) {
             val live = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
             if (live != null) {
-                val latRound = (live.latitude * 1000000.0).roundToLong() / 1000000.0
-                val lngRound = (live.longitude * 1000000.0).roundToLong() / 1000000.0
-                val addr = live.address?.takeIf { it.isNotBlank() }
-                source = if (addr != null) "$addr ($latRound, $lngRound)" else "$latRound, $lngRound"
+                source = live.address?.takeIf { it.isNotBlank() }
+                    ?: LocationCoordinateResolver.resolveNearestCityOrArea(live.latitude, live.longitude)
             }
         }
     }
@@ -2050,12 +2093,10 @@ private fun CreateTripDialog(
                                     scope.launch {
                                         val fresh = PlatformLocation.fetchFreshLocation() ?: PlatformLocation.getCurrentLocation()
                                         if (fresh != null) {
-                                            val latRound = (fresh.latitude * 1000000.0).roundToLong() / 1000000.0
-                                            val lngRound = (fresh.longitude * 1000000.0).roundToLong() / 1000000.0
-                                            val addr = fresh.address?.takeIf { it.isNotBlank() }
-                                            source = if (addr != null) "$addr ($latRound, $lngRound)" else "$latRound, $lngRound"
+                                            source = fresh.address?.takeIf { it.isNotBlank() }
+                                                ?: LocationCoordinateResolver.resolveNearestCityOrArea(fresh.latitude, fresh.longitude)
                                         } else {
-                                            source = "12.9716, 77.5946"
+                                            source = "Bengaluru"
                                         }
                                         sourceSuggestions = emptyList()
                                         isDetectingGps = false
@@ -2342,10 +2383,8 @@ private fun CreateTripDialog(
                     val live = PlatformLocation.getCurrentLocation()
                     val resolvedSource = source.ifBlank {
                         if (live != null) {
-                            val latRound = (live.latitude * 1000000.0).roundToLong() / 1000000.0
-                            val lngRound = (live.longitude * 1000000.0).roundToLong() / 1000000.0
-                            val addr = live.address?.takeIf { it.isNotBlank() }
-                            if (addr != null) "$addr ($latRound, $lngRound)" else "$latRound, $lngRound"
+                            live.address?.takeIf { it.isNotBlank() }
+                                ?: LocationCoordinateResolver.resolveNearestCityOrArea(live.latitude, live.longitude)
                         } else "Bengaluru"
                     }
                     val initialMembers = tripMembers.map { m ->
@@ -2530,16 +2569,31 @@ private fun RideTypeButton(
 // LIVE TRACKING HUB: 1. LIVE USERS  2. VEHICLE GPS  3. CHILD BAG TAGS
 // ============================================================
 
-fun deduplicateTripMembers(members: List<TripMember>, myName: String = ""): List<TripMember> {
+fun deduplicateTripMembers(
+    members: List<TripMember>,
+    myName: String = "",
+    leaderName: String = ""
+): List<TripMember> {
     val cleanMyName = myName.trim().lowercase().substringBefore("@")
+    val cleanLeader = leaderName.trim().lowercase().substringBefore("@")
     val seen = mutableSetOf<String>()
     val result = mutableListOf<TripMember>()
 
-    // Sort to place "You" / current device first
-    val sorted = members.sortedByDescending { m ->
-        val mClean = m.name.trim().lowercase().substringBefore("@")
-        (cleanMyName.isNotBlank() && mClean == cleanMyName) || m.name.equals(myName, ignoreCase = true)
-    }
+    // Priority sorting:
+    // 1st: The Leader (creator of the trip)
+    // 2nd: "You" / current device (if not leader)
+    // 3rd: Other members
+    val sorted = members.sortedWith(
+        compareByDescending<TripMember> { m ->
+            val mClean = m.name.trim().lowercase().substringBefore("@")
+            val mId = m.id.trim().lowercase()
+            cleanLeader.isNotBlank() && (mClean == cleanLeader || mId == cleanLeader)
+        }.thenByDescending { m ->
+            val mClean = m.name.trim().lowercase().substringBefore("@")
+            val mId = m.id.trim().lowercase()
+            (cleanMyName.isNotBlank() && (mClean == cleanMyName || mId == cleanMyName)) || m.name.equals(myName, ignoreCase = true)
+        }
+    )
 
     for (m in sorted) {
         val norm = m.name.trim().lowercase().substringBefore("@")
@@ -2599,8 +2653,8 @@ private fun TrackingScreen(
         }
     }
 
-    val distinctBuddies = remember(activeBuddies, currentUserName) {
-        deduplicateTripMembers(activeBuddies, currentUserName)
+    val distinctBuddies = remember(activeBuddies, currentUserName, activeTrip?.createdBy) {
+        deduplicateTripMembers(activeBuddies, currentUserName, activeTrip?.createdBy.orEmpty())
     }
 
     // Keep activeBuddies synced when activeTrip or members change
@@ -2608,7 +2662,7 @@ private fun TrackingScreen(
         if (activeTrip != null && activeTrip.id.isNotBlank()) {
             trackingCode = activeTrip.tripCode.ifBlank { activeTrip.id }
         }
-        activeBuddies = deduplicateTripMembers(members, currentUserName)
+        activeBuddies = deduplicateTripMembers(members, currentUserName, activeTrip?.createdBy.orEmpty())
     }
 
     // Bidirectional Real-time Multi-Device Sync: Auto-refreshes co-travelers and telemetry every 3.5s
@@ -2626,23 +2680,20 @@ private fun TrackingScreen(
         while (isActive) {
             // Send this device's live telemetry (authentic battery percentage and real GPS coords)
             val myBattery = PlatformBattery.getBatteryLevel()
-            val liveLoc = PlatformLocation.getCurrentLocation()
-            val (srcLat, srcLng) = LocationCoordinateResolver.resolveCoordinates(activeTrip?.source ?: "Bengaluru")
-            val uploadLat = liveLoc?.latitude ?: srcLat
-            val uploadLng = liveLoc?.longitude ?: srcLng
-            val uploadSpeed = liveLoc?.speedKmh ?: 0.0
-
-            repository?.updateLocation(
-                LocationUpdateRequest(
-                    tripId = currentTripId,
-                    userId = myName.ifBlank { myId },
-                    latitude = uploadLat,
-                    longitude = uploadLng,
-                    speed = uploadSpeed,
-                    battery = myBattery,
-                    timestamp = System.currentTimeMillis()
+            val liveLoc = PlatformLocation.getCurrentLocation() ?: PlatformLocation.fetchFreshLocation()
+            if (liveLoc != null && liveLoc.latitude != 0.0 && liveLoc.longitude != 0.0) {
+                repository?.updateLocation(
+                    LocationUpdateRequest(
+                        tripId = currentTripId,
+                        userId = myName.ifBlank { myId },
+                        latitude = liveLoc.latitude,
+                        longitude = liveLoc.longitude,
+                        speed = liveLoc.speedKmh,
+                        battery = myBattery,
+                        timestamp = System.currentTimeMillis()
+                    )
                 )
-            )
+            }
 
             // Pull live trip members so User A on Phone 1 sees User B when User B joins on Phone 2!
             repository?.getTrips()?.onSuccess { allTrips ->
@@ -2652,7 +2703,7 @@ private fun TrackingScreen(
                     (activeTrip != null && (it.id.equals(activeTrip.tripCode, ignoreCase = true) || it.tripCode.equals(activeTrip.id, ignoreCase = true)))
                 }
                 if (serverTrip != null && serverTrip.members.isNotEmpty()) {
-                    val cleanList = deduplicateTripMembers(serverTrip.members, myName)
+                    val cleanList = deduplicateTripMembers(serverTrip.members, myName, serverTrip.createdBy)
                     activeBuddies = cleanList
                     onTripUpdated?.invoke(serverTrip.copy(members = cleanList))
                 }
@@ -2843,7 +2894,7 @@ private fun TrackingScreen(
                                                 // Check if already in loaded trips
                                                 val localMatch = trips.firstOrNull { it.id.equals(inputCode, ignoreCase = true) || it.tripCode.equals(inputCode, ignoreCase = true) }
                                                 if (localMatch != null) {
-                                                    val clean = deduplicateTripMembers(localMatch.members, myName)
+                                                    val clean = deduplicateTripMembers(localMatch.members, myName, localMatch.createdBy)
                                                     val synced = localMatch.copy(members = clean)
                                                     activeBuddies = clean
                                                     trackingCode = synced.tripCode.ifBlank { synced.id }
@@ -2852,10 +2903,12 @@ private fun TrackingScreen(
                                                     joinCodeInput = ""
                                                 } else {
                                                     scope.launch {
+                                                        // Eagerly acquire fresh high-accuracy GPS fix
+                                                        val freshLoc = PlatformLocation.fetchFreshLocation() ?: PlatformLocation.getCurrentLocation()
                                                         // Call remote joinTrip so the server registers this device into the trip!
                                                         repository?.joinTrip(inputCode, myName, myName)
                                                             ?.onSuccess { joinedTrip ->
-                                                                val clean = deduplicateTripMembers(joinedTrip.members, myName)
+                                                                val clean = deduplicateTripMembers(joinedTrip.members, myName, joinedTrip.createdBy)
                                                                 activeBuddies = clean
                                                                 trackingCode = joinedTrip.tripCode.ifBlank { joinedTrip.id }
                                                                 onTripUpdated?.invoke(joinedTrip.copy(members = clean))
@@ -2863,8 +2916,7 @@ private fun TrackingScreen(
                                                                 joinCodeInput = ""
 
                                                                 // Push immediate first live GPS location packet
-                                                                val freshLoc = PlatformLocation.getCurrentLocation()
-                                                                if (freshLoc != null) {
+                                                                if (freshLoc != null && freshLoc.latitude != 0.0) {
                                                                     repository?.updateLocation(
                                                                         LocationUpdateRequest(
                                                                             tripId = joinedTrip.id,
@@ -2885,15 +2937,28 @@ private fun TrackingScreen(
                                                                     if (found != null) {
                                                                         val myNorm = myName.trim().lowercase().substringBefore("@")
                                                                         val updatedMembers = if (found.members.none { it.name.trim().lowercase().substringBefore("@") == myNorm }) {
-                                                                            found.members + TripMember(myId, myName, 0xFF1D64F2L, true)
+                                                                            found.members + TripMember(myId, myName, 0xFF1D64F2L, true, latitude = freshLoc?.latitude, longitude = freshLoc?.longitude, speedKmh = freshLoc?.speedKmh)
                                                                         } else found.members
-                                                                        val clean = deduplicateTripMembers(updatedMembers, myName)
+                                                                        val clean = deduplicateTripMembers(updatedMembers, myName, found.createdBy)
                                                                         val synced = found.copy(members = clean)
                                                                         activeBuddies = clean
                                                                         trackingCode = synced.tripCode.ifBlank { synced.id }
                                                                         onTripUpdated?.invoke(synced)
                                                                         codeStatusMessage = "Loaded trip '${synced.name}' (${clean.size} travelers)! Live tracking active."
                                                                         joinCodeInput = ""
+                                                                        if (freshLoc != null && freshLoc.latitude != 0.0) {
+                                                                            repository?.updateLocation(
+                                                                                LocationUpdateRequest(
+                                                                                    tripId = synced.id,
+                                                                                    userId = myName,
+                                                                                    latitude = freshLoc.latitude,
+                                                                                    longitude = freshLoc.longitude,
+                                                                                    speed = freshLoc.speedKmh,
+                                                                                    battery = PlatformBattery.getBatteryLevel(),
+                                                                                    timestamp = System.currentTimeMillis()
+                                                                                )
+                                                                            )
+                                                                        }
                                                                     } else {
                                                                         codeStatusMessage = "Trip ID '$inputCode' not found. Please verify the code."
                                                                     }
@@ -2950,6 +3015,7 @@ private fun TrackingScreen(
                             RiderDetailsTable(
                                 buddies = distinctBuddies,
                                 currentUserName = currentUserName,
+                                tripCreatedBy = activeTrip.createdBy,
                                 currentUserLat = myLat,
                                 currentUserLng = myLng,
                                 currentUserSpeedKmh = mySpeed,
@@ -3351,6 +3417,7 @@ private fun TrackingScreen(
 private fun RiderDetailsTable(
     buddies: List<TripMember>,
     currentUserName: String,
+    tripCreatedBy: String = "",
     currentUserLat: Double = 0.0,
     currentUserLng: Double = 0.0,
     currentUserSpeedKmh: Double = 0.0,
@@ -3359,6 +3426,7 @@ private fun RiderDetailsTable(
 ) {
     val myName = currentUserName.ifBlank { SessionManager.getUserName().ifBlank { "You" } }
     val myNorm = myName.trim().lowercase().substringBefore("@")
+    val creatorNorm = tripCreatedBy.trim().lowercase().substringBefore("@")
 
     val riderColors = listOf(
         Color(0xFF1A73E8), // Blue for 1 (Leader / You)
@@ -3472,9 +3540,21 @@ private fun RiderDetailsTable(
                                     fontSize = 13.sp,
                                     color = tbTextColor()
                                 )
-                                if (index == 0) {
+                                val isLeader = if (creatorNorm.isNotBlank()) {
+                                    buddyNorm == creatorNorm || buddy.id.trim().lowercase() == creatorNorm
+                                } else {
+                                    index == 0
+                                }
+                                if (isLeader) {
                                     Text(
-                                        text = "Leader",
+                                        text = "👑 Leader",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFF59E0B)
+                                    )
+                                } else {
+                                    Text(
+                                        text = "Member",
                                         fontSize = 11.sp,
                                         color = tbSubtextColor()
                                     )
